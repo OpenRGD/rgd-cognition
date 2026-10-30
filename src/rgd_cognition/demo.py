@@ -23,7 +23,9 @@ def run_replay(count: int = 1000) -> dict:
     responses = {}
     for index in range(count):
         event = synthetic_event(index)
-        assert host.submit(event).status == "QUEUED"
+        submission = host.submit(event)
+        if submission.status != "QUEUED":
+            raise RuntimeError("REPLAY_SUBMISSION_REJECTED")
         result = host.next_result()
         if result is None:
             raise RuntimeError("REPLAY_EXPIRED")
