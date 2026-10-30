@@ -1,0 +1,21 @@
+[build-system]
+requires = ["setuptools==80.9.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "rgd-cognition"
+version = "0.1.0a1"
+description = "Non-actuating OpenRGD cognitive contracts and offline foundation"
+readme = "README.md"
+requires-python = ">=3.10"
+license = "MIT"
+dependencies = ["jsonschema==4.26.0"]
+
+[project.scripts]
+rgd-cognition = "rgd_cognition.__main__:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+rgd_cognition = ["schemas/*.json"]
