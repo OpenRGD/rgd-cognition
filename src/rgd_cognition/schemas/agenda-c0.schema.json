@@ -1,0 +1,94 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:openrgd:cognition:agenda-c0:v0.1-candidate",
+  "description": "Candidate offline-only cognitive agenda contracts; not OpenRGD normative contracts",
+  "$defs": {
+    "GoalCandidate": {
+      "type": "object", "additionalProperties": false,
+      "required": ["schema_version", "candidate_id", "session_id", "context_revision", "source_event_ref", "origin_role_hint", "cue_kind", "goal_kind", "parent_goal_id", "depth", "evidence_refs", "requested_effect_scope", "external_network_requested", "requested_budget_steps", "ttl_ms", "life_id", "chronon_status", "evidence_quality", "may_actuate"],
+      "properties": {
+        "schema_version": {"const": "cog_goal_candidate_v0.1-candidate"},
+        "candidate_id": {"$ref": "#/$defs/Digest"},
+        "session_id": {"type": "string", "pattern": "^cog-c0-session:[a-f0-9-]{36}$"},
+        "context_revision": {"$ref": "#/$defs/Digest"},
+        "source_event_ref": {"$ref": "#/$defs/Digest"},
+        "origin_role_hint": {"enum": ["work", "imagination"]},
+        "cue_kind": {"enum": ["IMU_DISCREPANCY", "POSSIBLE_FIRST_STEP", "EVIDENCE_CONFLICT"]},
+        "goal_kind": {"enum": ["INVESTIGATE_IMU_UNCERTAINTY", "REAPPRAISE_FIRST_STEP", "INVESTIGATE_EVIDENCE_CONFLICT"]},
+        "parent_goal_id": {"anyOf": [{"$ref": "#/$defs/Digest"}, {"type": "null"}]},
+        "depth": {"type": "integer", "minimum": 0, "maximum": 16},
+        "evidence_refs": {"type": "array", "items": {"type": "string", "minLength": 1, "maxLength": 256}, "uniqueItems": true, "minItems": 1, "maxItems": 17},
+        "requested_effect_scope": {"enum": ["INTERNAL_READ_ONLY", "HISTORY_COMMIT_REQUEST", "COMMUNICATION_REQUEST", "DIGITAL_EFFECT_REQUEST", "PHYSICAL_ACTION_REQUEST"]},
+        "external_network_requested": {"type": "boolean"},
+        "requested_budget_steps": {"type": "integer", "minimum": 1, "maximum": 8},
+        "ttl_ms": {"type": "integer", "minimum": 1, "maximum": 300000},
+        "life_id": {"const": null},
+        "chronon_status": {"const": "NOT_CONNECTED"},
+        "evidence_quality": {"const": "DECLARED_ONLY"},
+        "may_actuate": {"const": false}
+      }
+    },
+    "GoalAdmission": {
+      "type": "object", "additionalProperties": false,
+      "required": ["schema_version", "candidate_id", "session_id", "outcome", "reason_code", "policy_revision", "granted_effect_scope", "may_actuate"],
+      "properties": {
+        "schema_version": {"const": "cog_goal_admission_v0.1-candidate"},
+        "candidate_id": {"$ref": "#/$defs/Digest"},
+        "session_id": {"type": "string", "minLength": 1, "maxLength": 96},
+        "outcome": {"enum": ["ADMITTED", "REJECTED", "DEFERRED"]},
+        "reason_code": {"type": "string", "pattern": "^[A-Z][A-Z0-9_]{0,63}$"},
+        "policy_revision": {"const": "cog-c0-session-internal-readonly-v1"},
+        "granted_effect_scope": {"anyOf": [{"const": "INTERNAL_READ_ONLY"}, {"type": "null"}]},
+        "may_actuate": {"const": false}
+      },
+      "allOf": [{"if": {"properties": {"outcome": {"const": "ADMITTED"}}}, "then": {"properties": {"granted_effect_scope": {"const": "INTERNAL_READ_ONLY"}}}, "else": {"properties": {"granted_effect_scope": {"const": null}}}}]
+    },
+    "GoalOutcome": {
+      "type": "object", "additionalProperties": false,
+      "required": ["schema_version", "goal_id", "session_id", "state", "evidence_refs", "verification", "chronon_status", "life_id", "may_actuate"],
+      "properties": {
+        "schema_version": {"const": "cog_goal_outcome_v0.1-candidate"},
+        "goal_id": {"$ref": "#/$defs/Digest"},
+        "session_id": {"type": "string", "minLength": 1},
+        "state": {"enum": ["WAITING_EVIDENCE", "COMPLETED_WITH_UNCERTAINTY", "ABSTAINED"]},
+        "evidence_refs": {"type": "array", "items": {"type": "string", "minLength": 1}, "maxItems": 16, "uniqueItems": true},
+        "verification": {"const": "UNVERIFIED"},
+        "chronon_status": {"const": "NOT_CONNECTED"},
+        "life_id": {"const": null},
+        "may_actuate": {"const": false}
+      }
+    },
+    "AgendaAudit": {
+      "type": "object", "additionalProperties": false,
+      "required": ["schema_version", "session_id", "goal_id", "action", "reason_code", "local_monotonic_ns", "chronon_status", "may_actuate"],
+      "properties": {
+        "schema_version": {"const": "cog_agenda_audit_v0.1-candidate"},
+        "session_id": {"type": "string", "minLength": 1, "maxLength": 96},
+        "goal_id": {"anyOf": [{"$ref": "#/$defs/Digest"}, {"type": "null"}]},
+        "action": {"type": "string", "pattern": "^[A-Z][A-Z0-9_]{0,63}$"},
+        "reason_code": {"type": "string", "pattern": "^[A-Z][A-Z0-9_]{0,63}$"},
+        "local_monotonic_ns": {"type": "integer", "minimum": 0},
+        "chronon_status": {"const": "NOT_CONNECTED"},
+        "may_actuate": {"const": false}
+      }
+    },
+    "OneiricAnnotation": {
+      "type": "object", "additionalProperties": false,
+      "required": ["schema_version", "annotation_id", "source_event_ref", "label", "supersedes_annotation_ref", "observation_tags", "scope", "physical_verification", "chronon_id", "life_id", "may_actuate"],
+      "properties": {
+        "schema_version": {"const": "cog_oneiric_annotation_v0.1-candidate"},
+        "annotation_id": {"$ref": "#/$defs/Digest"},
+        "source_event_ref": {"$ref": "#/$defs/Digest"},
+        "label": {"enum": ["STEP_PLAUSIBLE_IN_FIXTURE", "STEP_NOT_SUPPORTED_IN_FIXTURE", "INSUFFICIENT_EVIDENCE"]},
+        "supersedes_annotation_ref": {"anyOf": [{"$ref": "#/$defs/Digest"}, {"type": "null"}]},
+        "observation_tags": {"type": "array", "items": {"enum": ["FOOT_LIFT", "FORWARD_DISPLACEMENT", "CONTACT_CHANGE", "NO_TRANSLATION", "IMU_UNCALIBRATED"]}, "uniqueItems": true, "maxItems": 12},
+        "scope": {"const": "SYNTHETIC_FIXTURE_ONLY"},
+        "physical_verification": {"const": "NOT_VERIFIED"},
+        "chronon_id": {"const": null},
+        "life_id": {"const": null},
+        "may_actuate": {"const": false}
+      }
+    },
+    "Digest": {"type": "string", "pattern": "^sha256:[a-f0-9]{64}$"}
+  }
+}
