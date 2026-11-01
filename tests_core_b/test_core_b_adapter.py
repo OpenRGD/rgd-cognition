@@ -317,14 +317,26 @@ class BoundaryTests(unittest.TestCase):
             self.host.accept_record(self.owners.model,'KernelEvent',e,payload={})
 
     def test_synthetic_oneiric_uses_actual_c0_review_without_history(self):
-        from rgd_cognition.agenda_c0 import oneiric_review
-        g=self.goal(task_ref='cog.task.v1:oneiric-first-step');t=self.start(g)
-        first=oneiric_review(source_event_ref=digest('source'),observation_tags=['FOOT_LIFT'])
-        second=oneiric_review(source_event_ref=digest('source'),observation_tags=['NO_TRANSLATION'],previous=first)
+        from rgd_cognition.core_b_oneiric import oneiric_goal
+        source=digest('source')
+        budget=dict(wall_time_ms=1000,steps=3,subgoals=0,depth=0,queue_items=1)
+        package=oneiric_goal(self.schema,source_event_ref=source,context=self.ctx,
+            clock_domain='test:clock',created_ms=100,ttl_ms=1000,
+            producer_ref=self.owners.producer(self.owners.imagination)[0],budget=budget)
+        g=package['goal']
+        self.assertEqual(self.host.submit(self.owners.imagination,g,key='oneiric:1',
+                                          task_detail=package['detail'])['outcome'],'ADMIT')
+        self.host.move(self.owners.work,g['goal_id'],'RUNNING',key='oneiric:start')
+        t=self.host.ticket(self.owners.work,g['goal_id'])
+        first=self.host.review_oneiric(self.owners.work,t,observation_tags=['FOOT_LIFT'],key='review:1')
+        second=self.host.review_oneiric(self.owners.work,t,observation_tags=['NO_TRANSLATION'],key='review:2')
         self.assertEqual(second['supersedes_annotation_ref'],first['annotation_id'])
         self.assertIsNone(second['chronon_id'])
-        r=self.host.finish(self.owners.work,t,code='ANALYSIS_COMPLETE',evidence_refs=['test:evidence'],key='review')
+        r=self.host.finish(self.owners.work,t,code='ANALYSIS_COMPLETE',evidence_refs=[source],
+                           key='oneiric:finish',interpretation=second)
         self.assertEqual(r['outcome']['verification'],'UNVERIFIED')
+        self.assertEqual(r['outcome']['interpretation']['label'],'STEP_NOT_SUPPORTED_IN_FIXTURE')
+        self.assertEqual(r['cognitive_trace']['interpretation_digest'],digest(second))
 
 
 # Individually reported semantic mutations, not repeated interpreter counts.

@@ -10,7 +10,7 @@ from rgd_cognition.attention_c1_demo import FixtureClock, fixture_binding, fixtu
 from rgd_cognition.context import context_slice
 from rgd_cognition.contracts import validate, ContractError
 from rgd_cognition.rgd_context import RGDContextResolver, CORE_COMMIT
-from rgd_cognition.core_b_adapter import Limits, BridgeError, check_detail
+from rgd_cognition.core_b_adapter import Limits, BridgeError, check_detail, validate_result_bundle
 from rgd_cognition.core_b_c1 import CoreBAttentionHost, cue_goal
 
 CORE = Path(os.environ['RGD_CORE_CHECKOUT'])
@@ -132,6 +132,34 @@ class GenuineIntegration(unittest.TestCase):
         with self.assertRaises(BridgeError):
             CoreBAttentionHost(SCHEMA,context_supplier=lambda:context_slice('lab-robot'),
                 binding=fixture_binding('AUTHORIZED_LOCAL_FEED'),clock=self.clock)
+
+    def test_real_c1_work_result_contains_bound_trace(self):
+        result=self.samples()
+        package=result['proposal'];goal=package['goal']; owners=self.host.owners
+        self.assertEqual(self.host.work._jobs[goal['goal_id']].task_detail,package['detail'])
+        self.host.work.move(owners.work,goal['goal_id'],'RUNNING',key='start')
+        ticket=self.host.work.ticket(owners.work,goal['goal_id'])
+        completed=self.host.work.finish(owners.work,ticket,code='ANALYSIS_COMPLETE',
+             evidence_refs=goal['provenance']['evidence_refs'],key='finish')
+        self.assertEqual(validate_result_bundle(self.host.schema,completed),completed)
+        self.assertEqual(completed['outcome']['context'],goal['context'])
+        self.assertEqual(completed['cognitive_trace']['provenance_class'],'SYNTHETIC')
+        self.assertEqual(completed['cognitive_trace']['verification'],'UNVERIFIED')
+        self.assertIsNone(completed['outcome']['interpretation'])
+
+    def test_fractional_ingest_explicit_deferral_no_false_admission(self):
+        # Conservatively rounded creation time falls in the next ms bucket.
+        # The source C1 cue is real code over fixture samples; no waiting/sleep.
+        self.clock.value+=400_000
+        r=self.samples()
+        self.assertEqual(r['attention']['status'],'CUE')
+        self.assertIsNone(r['proposal'])
+        self.assertEqual(r['deferral']['reason_code'],'CREATION_BUCKET_NOT_REACHED')
+        self.assertEqual(r['deferral']['original_deadline_ns'],
+                         r['attention']['cue']['expires_at_monotonic_ns'])
+        self.assertEqual(self.host.work.inspect()['goals'],{})
+        self.assertEqual(self.host.work.inspect()['usage']['reserved_steps'],0)
+        self.assertIsNone(self.host.work.inspect()['life_id'])
 
     def test_close_is_session_end_not_life_recovery(self):
         self.samples();self.host.close()

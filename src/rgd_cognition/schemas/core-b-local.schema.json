@@ -6,49 +6,532 @@
     "TransitionDetail": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["schema_version", "transition_ref", "task_ref", "reason_code", "verification", "chronon_id", "life_id"],
+      "required": [
+        "schema_version",
+        "transition_ref",
+        "task_ref",
+        "reason_code",
+        "verification",
+        "chronon_id",
+        "life_id"
+      ],
       "properties": {
-        "schema_version": {"const": "cog_core_b_transition_detail_v1-candidate"},
-        "transition_ref": {"type": "string", "pattern": "^sha256:[a-f0-9]{64}$"},
-        "task_ref": {"type": "string", "minLength": 1, "maxLength": 256},
-        "reason_code": {"type": "string", "minLength": 1, "maxLength": 256},
-        "verification": {"const": "UNVERIFIED"},
-        "chronon_id": {"type": "null"},
-        "life_id": {"type": "null"}
+        "schema_version": {
+          "const": "cog_core_b_transition_detail_v1-candidate"
+        },
+        "transition_ref": {
+          "type": "string",
+          "pattern": "^sha256:[a-f0-9]{64}$"
+        },
+        "task_ref": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "reason_code": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "verification": {
+          "const": "UNVERIFIED"
+        },
+        "chronon_id": {
+          "type": "null"
+        },
+        "life_id": {
+          "type": "null"
+        }
       }
     },
     "Outcome": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["schema_version", "code", "verification", "evidence_refs", "task_generation", "grants_authority"],
+      "required": [
+        "schema_version",
+        "goal_id",
+        "goal_revision",
+        "admission_ref",
+        "transition_ref",
+        "task_ref",
+        "context",
+        "code",
+        "result_semantics",
+        "verification",
+        "evidence_refs",
+        "task_generation",
+        "interpretation",
+        "trace_ref",
+        "grants_authority",
+        "annotation_history"
+      ],
       "properties": {
-        "schema_version": {"const": "cog_core_b_outcome_v1-candidate"},
-        "code": {"enum": ["ANALYSIS_COMPLETE", "INSUFFICIENT_EVIDENCE", "ABSTAIN"]},
-        "verification": {"const": "UNVERIFIED"},
-        "evidence_refs": {"type": "array", "maxItems": 64, "uniqueItems": true, "items": {"type": "string", "minLength": 1, "maxLength": 256}},
-        "task_generation": {"type": "integer", "minimum": 0, "maximum": 2147483647},
-        "grants_authority": {"const": false}
+        "schema_version": {
+          "const": "cog_core_b_outcome_v1-candidate"
+        },
+        "goal_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "goal_revision": {
+          "type": "string",
+          "pattern": "^sha256:[a-f0-9]{64}$"
+        },
+        "admission_ref": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "transition_ref": {
+          "type": "string",
+          "pattern": "^sha256:[a-f0-9]{64}$"
+        },
+        "task_ref": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "context": {
+          "type": "object",
+          "$comment": "Validated as Context using pinned Core-B schema, then checked for equality with the current authoritative local context."
+        },
+        "code": {
+          "enum": [
+            "ANALYSIS_COMPLETE",
+            "INSUFFICIENT_EVIDENCE",
+            "ABSTAIN"
+          ]
+        },
+        "result_semantics": {
+          "enum": [
+            "INQUIRY_FINISHED_UNVERIFIED",
+            "INQUIRY_PAUSED_EVIDENCE",
+            "ABSTAINED_UNVERIFIED"
+          ]
+        },
+        "verification": {
+          "const": "UNVERIFIED"
+        },
+        "evidence_refs": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256
+          },
+          "maxItems": 64,
+          "uniqueItems": true
+        },
+        "task_generation": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 2147483647
+        },
+        "interpretation": {
+          "anyOf": [
+            {
+              "type": "object",
+              "$comment": "Real C0 OneiricAnnotation schema and digest validated by the receiver; not a canonical Chronon."
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "trace_ref": {
+          "type": "string",
+          "pattern": "^sha256:[a-f0-9]{64}$"
+        },
+        "grants_authority": {
+          "const": false
+        },
+        "annotation_history": {
+          "type": "array",
+          "items": {
+            "type": "object"
+          },
+          "maxItems": 8,
+          "$comment": "Fixture annotations are validated and chained using the original C0 OneiricAnnotation validator; not Chronons."
+        }
       }
     },
     "TaskDetail": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["schema_version", "goal_id", "goal_revision", "task_ref", "source_cue", "created_monotonic_ns", "deadline_monotonic_ns", "success_condition", "stop_conditions", "evidence_quality", "verification", "life_id", "chronon_id", "grants_authority"],
+      "required": [
+        "schema_version",
+        "goal_id",
+        "goal_revision",
+        "task_ref",
+        "source_cue",
+        "created_monotonic_ns",
+        "deadline_monotonic_ns",
+        "success_condition",
+        "stop_conditions",
+        "evidence_quality",
+        "verification",
+        "life_id",
+        "chronon_id",
+        "grants_authority",
+        "context"
+      ],
       "properties": {
-        "schema_version": {"const": "cog_core_b_task_detail_v1-candidate"},
-        "goal_id": {"type": "string", "pattern": "^sha256:[a-f0-9]{64}$"},
-        "goal_revision": {"type": "string", "pattern": "^sha256:[a-f0-9]{64}$"},
-        "task_ref": {"const": "cog.task.v1:imu-uncertainty"},
-        "source_cue": {"type": "object", "$comment": "Additionally validated by the genuine existing C1 AttentionCue validator and digest, before wrapping."},
-        "created_monotonic_ns": {"type": "integer", "minimum": 0},
-        "deadline_monotonic_ns": {"type": "integer", "minimum": 0},
-        "success_condition": {"const": "ANALYSIS_REPORTED_NOT_HYPOTHESIS_CONFIRMED"},
-        "stop_conditions": {"const": ["ORIGINAL_EVIDENCE_EXPIRED", "BUDGET_EXHAUSTED", "CONTEXT_CHANGED"]},
-        "evidence_quality": {"const": "DECLARED_ONLY"},
-        "verification": {"const": "UNVERIFIED"},
-        "life_id": {"type": "null"},
-        "chronon_id": {"type": "null"},
-        "grants_authority": {"const": false}
+        "schema_version": {
+          "const": "cog_core_b_task_detail_v1-candidate"
+        },
+        "goal_id": {
+          "type": "string",
+          "pattern": "^sha256:[a-f0-9]{64}$"
+        },
+        "goal_revision": {
+          "type": "string",
+          "pattern": "^sha256:[a-f0-9]{64}$"
+        },
+        "task_ref": {
+          "const": "cog.task.v1:imu-uncertainty"
+        },
+        "source_cue": {
+          "type": "object",
+          "$comment": "Additionally validated by the genuine existing C1 AttentionCue validator and digest, before wrapping."
+        },
+        "created_monotonic_ns": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "deadline_monotonic_ns": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "success_condition": {
+          "const": "ANALYSIS_REPORTED_NOT_HYPOTHESIS_CONFIRMED"
+        },
+        "stop_conditions": {
+          "const": [
+            "ORIGINAL_EVIDENCE_EXPIRED",
+            "BUDGET_EXHAUSTED",
+            "CONTEXT_CHANGED"
+          ]
+        },
+        "evidence_quality": {
+          "const": "DECLARED_ONLY"
+        },
+        "verification": {
+          "const": "UNVERIFIED"
+        },
+        "life_id": {
+          "type": "null"
+        },
+        "chronon_id": {
+          "type": "null"
+        },
+        "grants_authority": {
+          "const": false
+        },
+        "context": {
+          "type": "object",
+          "$comment": "Validated as Context using pinned Core-B schema, then checked for equality with the current authoritative local context."
+        }
+      }
+    },
+    "OneiricTaskDetail": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema_version",
+        "goal_id",
+        "goal_revision",
+        "task_ref",
+        "context",
+        "source_event_ref",
+        "source_quality",
+        "initial_label",
+        "success_condition",
+        "stop_conditions",
+        "verification",
+        "life_id",
+        "chronon_id",
+        "grants_authority"
+      ],
+      "properties": {
+        "schema_version": {
+          "const": "cog_core_b_oneiric_task_detail_v1-candidate"
+        },
+        "goal_id": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:/#@+-]{0,255}$"
+        },
+        "goal_revision": {
+          "type": "string",
+          "pattern": "^sha256:[a-f0-9]{64}$"
+        },
+        "task_ref": {
+          "const": "cog.task.v1:oneiric-first-step"
+        },
+        "context": {
+          "type": "object",
+          "$comment": "Validated as Context using pinned Core-B schema, then checked for equality with the current authoritative local context."
+        },
+        "source_event_ref": {
+          "type": "string",
+          "pattern": "^sha256:[a-f0-9]{64}$"
+        },
+        "source_quality": {
+          "const": "SYNTHETIC_FIXTURE_ONLY"
+        },
+        "initial_label": {
+          "const": "POSSIBLE_FIRST_STEP"
+        },
+        "success_condition": {
+          "const": "REVIEW_ANNOTATED_NOT_MILESTONE_CONFIRMED"
+        },
+        "stop_conditions": {
+          "const": [
+            "EVIDENCE_EXPIRED",
+            "BUDGET_EXHAUSTED",
+            "CONTEXT_CHANGED"
+          ]
+        },
+        "verification": {
+          "const": "UNVERIFIED"
+        },
+        "life_id": {
+          "type": "null"
+        },
+        "chronon_id": {
+          "type": "null"
+        },
+        "grants_authority": {
+          "const": false
+        }
+      }
+    },
+    "CognitiveTraceCoreB": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema_version",
+        "trace_id",
+        "goal_id",
+        "goal_revision",
+        "admission_ref",
+        "transition_ref",
+        "context",
+        "task_ref",
+        "outcome_digest",
+        "outcome_code",
+        "reason_codes",
+        "result_semantics",
+        "evidence_refs",
+        "task_generation",
+        "interpretation_digest",
+        "provenance_class",
+        "policy_revision",
+        "steps_used",
+        "memory_status",
+        "chronon_link_status",
+        "life_id",
+        "privacy_scope",
+        "verification",
+        "may_actuate",
+        "grants_authority",
+        "annotation_chain_digest"
+      ],
+      "properties": {
+        "schema_version": {
+          "const": "cog_core_b_cognitive_trace_v1-candidate"
+        },
+        "trace_id": {
+          "type": "string",
+          "pattern": "^sha256:[a-f0-9]{64}$"
+        },
+        "goal_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "goal_revision": {
+          "type": "string",
+          "pattern": "^sha256:[a-f0-9]{64}$"
+        },
+        "admission_ref": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "transition_ref": {
+          "type": "string",
+          "pattern": "^sha256:[a-f0-9]{64}$"
+        },
+        "context": {
+          "type": "object",
+          "$comment": "Validated as Context using pinned Core-B schema, then checked for equality with the current authoritative local context."
+        },
+        "task_ref": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "outcome_digest": {
+          "type": "string",
+          "pattern": "^sha256:[a-f0-9]{64}$"
+        },
+        "outcome_code": {
+          "enum": [
+            "ANALYSIS_COMPLETE",
+            "INSUFFICIENT_EVIDENCE",
+            "ABSTAIN"
+          ]
+        },
+        "reason_codes": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256
+          },
+          "minItems": 1,
+          "maxItems": 16,
+          "uniqueItems": true
+        },
+        "result_semantics": {
+          "enum": [
+            "INQUIRY_FINISHED_UNVERIFIED",
+            "INQUIRY_PAUSED_EVIDENCE",
+            "ABSTAINED_UNVERIFIED"
+          ]
+        },
+        "evidence_refs": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256
+          },
+          "maxItems": 64,
+          "uniqueItems": true
+        },
+        "task_generation": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 2147483647
+        },
+        "interpretation_digest": {
+          "anyOf": [
+            {
+              "type": "string",
+              "pattern": "^sha256:[a-f0-9]{64}$"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "provenance_class": {
+          "enum": [
+            "DERIVED",
+            "SYNTHETIC",
+            "FIXTURE"
+          ]
+        },
+        "policy_revision": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "steps_used": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 1000000
+        },
+        "memory_status": {
+          "const": "NOT_CONNECTED"
+        },
+        "chronon_link_status": {
+          "const": "NOT_CONNECTED"
+        },
+        "life_id": {
+          "type": "null"
+        },
+        "privacy_scope": {
+          "const": "EPHEMERAL_LOCAL"
+        },
+        "verification": {
+          "const": "UNVERIFIED"
+        },
+        "may_actuate": {
+          "const": false
+        },
+        "grants_authority": {
+          "const": false
+        },
+        "annotation_chain_digest": {
+          "anyOf": [
+            {
+              "type": "string",
+              "pattern": "^sha256:[a-f0-9]{64}$"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      }
+    },
+    "InvalidationReport": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema_version",
+        "goal_id",
+        "goal_revision",
+        "admission_ref",
+        "context",
+        "reason_code",
+        "verification",
+        "chronon_id",
+        "life_id",
+        "local_invalidation"
+      ],
+      "properties": {
+        "schema_version": {
+          "const": "cog_core_b_invalidation_v1-candidate"
+        },
+        "goal_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "goal_revision": {
+          "type": "string",
+          "pattern": "^sha256:[a-f0-9]{64}$"
+        },
+        "admission_ref": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "context": {
+          "type": "object",
+          "$comment": "Cross-checked against original admitted Core-B Context"
+        },
+        "reason_code": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "verification": {
+          "const": "UNVERIFIED"
+        },
+        "chronon_id": {
+          "type": "null"
+        },
+        "life_id": {
+          "type": "null"
+        },
+        "local_invalidation": {
+          "const": true
+        }
       }
     }
   }

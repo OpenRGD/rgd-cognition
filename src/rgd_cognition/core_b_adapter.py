@@ -153,11 +153,12 @@ class LocalOwners:
     persistent identity guarantee. Do not expose operator/work tokens to models.
     """
     def __init__(self):
-        self.operator, self.work, self.attention, self.model = (object() for _ in range(4))
+        self.operator, self.work, self.attention, self.model, self.imagination = (object() for _ in range(5))
         self.admission_ref = "cog.local:admission"
         self.work_ref = "cog.local:work"
         self._producers = {self.attention: ("cog.local:attention", "Work"),
-                           self.model: ("cog.local:model", "MODEL")}
+                           self.model: ("cog.local:model", "MODEL"),
+                           self.imagination: ("cog.local:imagination", "Imagination")}
 
     def producer(self, channel) -> tuple[str, str]:
         for token, producer in self._producers.items():
@@ -185,6 +186,8 @@ class _Job:
     last_run_ms: int | None = None
     released: bool = False
     transitions: list = field(default_factory=list)
+    task_detail: dict | None = None
+    annotations: list = field(default_factory=list)
 
 
 class KernelSession:
@@ -241,15 +244,41 @@ class KernelSession:
             job.state = "CANCELLED"
             job.generation += 1
             job.last_run_ms = None
-            job.detail = {"code": reason, "verification": "UNVERIFIED", "local_invalidation": True}
+            job.detail = check_detail("InvalidationReport", {
+                "schema_version": "cog_core_b_invalidation_v1-candidate",
+                "goal_id": job.goal["goal_id"], "goal_revision": job.goal["goal_revision"],
+                "admission_ref": job.decision["decision_id"],
+                "context": deepcopy(job.goal["context"]), "reason_code": reason,
+                "verification": "UNVERIFIED", "chronon_id": None,
+                "life_id": None, "local_invalidation": True})
             self._release(job)
 
     def _stop_all(self, reason):
         for job in self._jobs.values():
             self._stop(job, reason)
 
+    def _charge_running(self, now: int) -> None:
+        """Charge elapsed local execution before ANY revocation/release, once.
+
+        A stale context must not make already-consumed wall time disappear.
+        Cannot preempt Python/remote models between API boundaries.
+        """
+        for job in self._jobs.values():
+            if job.state != "RUNNING" or job.last_run_ms is None:
+                continue
+            elapsed = now - job.last_run_ms
+            require(elapsed >= 0, "CLOCK_REGRESSION")
+            charge = min(elapsed, job.remaining_wall)
+            job.remaining_wall -= charge
+            self._spent_wall += charge
+            job.last_run_ms = now
+            if job.remaining_wall == 0:
+                self._stop(job, "WALL_BUDGET_EXHAUSTED")
+
     def _current(self):
         now = self._now()
+        # Commit the consumption BEFORE comparing a potentially revoked context.
+        self._charge_running(now)
         try:
             ctx = self._context()
         except BridgeError:
@@ -261,14 +290,6 @@ class KernelSession:
         for job in self._jobs.values():
             if job.state in TERMINAL:
                 continue
-            if job.state == "RUNNING" and job.last_run_ms is not None:
-                elapsed = now - job.last_run_ms
-                charge = min(elapsed, job.remaining_wall)
-                job.remaining_wall -= charge
-                self._spent_wall += charge
-                job.last_run_ms = now
-                if not job.remaining_wall:
-                    self._stop(job, "WALL_BUDGET_EXHAUSTED")
             lifetime = job.goal["lifetime"]
             if now >= lifetime["created_ms"] + lifetime["ttl_ms"]:
                 self._stop(job, "EXPIRED")
@@ -309,7 +330,7 @@ class KernelSession:
                 "reserved_slots": sum(j.slots for j in self._jobs.values()),
                 "idempotency_entries": len(self._seen)}
 
-    def submit(self, channel, goal: dict, *, key: str) -> dict:
+    def submit(self, channel, goal: dict, *, key: str, task_detail: dict | None = None) -> dict:
         with self._lock:
             producer, origin = self._owners.producer(channel)
             goal = self.schema.check("CognitiveGoalCandidate", goal)
@@ -318,7 +339,30 @@ class KernelSession:
             require(goal["provenance"]["producer_ref"] == producer and goal["origin"] == origin,
                     "PRODUCER_ROLE_MISMATCH")
             require(goal_revision(goal) == goal["goal_revision"], "GOAL_REVISION_MISMATCH")
-            scoped, old = self._remembered(producer, key, digest(goal))
+            if task_detail is not None:
+                kind = ("OneiricTaskDetail" if goal["goal_kind"] == "ONEIRIC_REVIEW"
+                        else "TaskDetail")
+                check_detail(kind, task_detail)
+                require((task_detail["goal_id"], task_detail["goal_revision"],
+                         task_detail["task_ref"]) ==
+                        (goal["goal_id"], goal["goal_revision"], goal["task_ref"]),
+                        "TASK_GOAL_BINDING_MISMATCH")
+                require(task_detail["context"] == ctx, "TASK_CONTEXT_MISMATCH")
+                if kind == "OneiricTaskDetail":
+                    require(task_detail["source_event_ref"] in goal["provenance"]["evidence_refs"]
+                            and goal["provenance"]["class"] == "SYNTHETIC",
+                            "ONEIRIC_SOURCE_UNBOUND")
+                else:
+                    from .attention_c1 import _validate, _digest
+                    cue = task_detail["source_cue"]
+                    _validate("AttentionCue", cue)
+                    require(_digest({k: v for k, v in cue.items() if k != "cue_id"}) == cue["cue_id"],
+                            "TASK_CUE_DIGEST_MISMATCH")
+                    require(cue["context_revision"] == ctx["revision"] and
+                            goal["provenance"]["evidence_refs"] == cue["source_refs"],
+                            "TASK_CUE_EVIDENCE_MISMATCH")
+            fingerprint = digest(goal if task_detail is None else {"goal": goal, "task": task_detail})
+            scoped, old = self._remembered(producer, key, fingerprint)
             if old is not None:
                 return old
             require(goal["goal_id"] not in self._jobs, "GOAL_ID_CONFLICT")
@@ -360,7 +404,8 @@ class KernelSession:
                 "evaluated_grant_refs": [], "allocated_budget": budget if outcome == "ADMIT" else None,
                 "context": ctx, "lifetime": deepcopy(goal["lifetime"]), "grants_authority": False})
             state = "ADMITTED" if outcome == "ADMIT" else ("REJECTED" if outcome == "REJECT" else "PROPOSED")
-            job = _Job(goal, decision, state, {"code": reason, "verification": "UNVERIFIED"})
+            job = _Job(goal, decision, state, {"code": reason, "verification": "UNVERIFIED"},
+                       task_detail=deepcopy(task_detail))
             if outcome == "ADMIT":
                 job.remaining_steps, job.remaining_wall, job.slots = budget["steps"], budget["wall_time_ms"], budget["queue_items"]
                 if parent:
@@ -369,7 +414,7 @@ class KernelSession:
             else:
                 job.released = True
             self._jobs[goal["goal_id"]] = job
-            self._remember(scoped, digest(goal), decision)
+            self._remember(scoped, fingerprint, decision)
             return deepcopy(decision)
 
     def _transition(self, job, from_state, to_state, reason, key, now):
@@ -431,21 +476,63 @@ class KernelSession:
             return {"goal_id": goal_id, "goal_revision": job.goal["goal_revision"],
                     "context": deepcopy(job.goal["context"]), "task_generation": job.generation}
 
-    def finish(self, channel, ticket: dict, *, code: str, evidence_refs: list[str], key: str) -> dict:
+    def _ticket_job(self, ticket: dict) -> _Job:
+        require(type(ticket) is dict and
+                set(ticket) == {"goal_id", "goal_revision", "context", "task_generation"},
+                "INVALID_TICKET")
+        job = self._jobs.get(ticket["goal_id"])
+        require(job is not None and job.state == "RUNNING" and self._resource == "NORMAL", "NOT_RUNNING")
+        expected = {"goal_id": job.goal["goal_id"], "goal_revision": job.goal["goal_revision"],
+                    "context": job.goal["context"], "task_generation": job.generation}
+        require(wire(ticket) == wire(expected), "STALE_TASK_RESULT")
+        return job
+
+    def review_oneiric(self, channel, ticket: dict, *, observation_tags: list[str], key: str) -> dict:
+        """Pure synthetic review controlled by Work; never a Chronon commit.
+
+        Each annotation is linked to the preceding local annotation, and costs
+        one reserved step. Only Work may evaluate or progress this candidate.
+        """
         with self._lock:
             self._owners.owner(channel, "work")
-            now, _ = self._current()
-            fingerprint = digest({"ticket": ticket, "code": code, "evidence_refs": evidence_refs})
+            self._current()
+            job = self._ticket_job(ticket)
+            require(job.goal["goal_kind"] == "ONEIRIC_REVIEW"
+                    and job.task_detail is not None, "ONEIRIC_TASK_DETAIL_REQUIRED")
+            require(job.remaining_steps > 0, "BUDGET_EXHAUSTED")
+            require(len(job.annotations) < 8, "ONEIRIC_ANNOTATION_LIMIT")
+            from .agenda_c0 import oneiric_review, AgendaError
+            require(type(observation_tags) is list and
+                    all(type(tag) is str for tag in observation_tags), "INVALID_ONEIRIC_TAGS")
+            fingerprint = digest({"ticket": ticket, "tags": observation_tags})
             scoped, old = self._remembered(self._owners.work_ref, key, fingerprint)
             if old is not None:
                 return old
-            require(type(ticket) is dict and set(ticket) == {"goal_id", "goal_revision", "context", "task_generation"},
-                    "INVALID_TICKET")
-            job = self._jobs.get(ticket["goal_id"])
-            require(job is not None and job.state == "RUNNING" and self._resource == "NORMAL", "NOT_RUNNING")
-            expected = {"goal_id": job.goal["goal_id"], "goal_revision": job.goal["goal_revision"],
-                        "context": job.goal["context"], "task_generation": job.generation}
-            require(wire(ticket) == wire(expected), "STALE_TASK_RESULT")
+            try:
+                annotation = oneiric_review(
+                    source_event_ref=job.task_detail["source_event_ref"],
+                    observation_tags=observation_tags,
+                    previous=job.annotations[-1] if job.annotations else None)
+            except (AgendaError, ValueError):
+                raise BridgeError("ONEIRIC_REVIEW_INVALID") from None
+            job.annotations.append(deepcopy(annotation))
+            job.remaining_steps -= 1
+            self._spent_steps += 1
+            self._remember(scoped, fingerprint, annotation)
+            return deepcopy(annotation)
+
+    def finish(self, channel, ticket: dict, *, code: str, evidence_refs: list[str],
+               key: str, interpretation: dict | None = None) -> dict:
+        with self._lock:
+            self._owners.owner(channel, "work")
+            now, _ = self._current()
+            # Full immutable result intent: a changed interpretation is a conflict.
+            fingerprint = digest({"ticket": ticket, "code": code, "evidence_refs": evidence_refs,
+                                  "interpretation": interpretation})
+            scoped, old = self._remembered(self._owners.work_ref, key, fingerprint)
+            if old is not None:
+                return old
+            job = self._ticket_job(ticket)
             require(code in {"ANALYSIS_COMPLETE", "INSUFFICIENT_EVIDENCE", "ABSTAIN"}, "UNKNOWN_OUTCOME")
             require(type(evidence_refs) is list and all(type(r) is str for r in evidence_refs)
                     and len(evidence_refs) <= 64 and len(set(evidence_refs)) == len(evidence_refs), "INVALID_EVIDENCE")
@@ -453,15 +540,70 @@ class KernelSession:
             require(job.remaining_steps > 0, "BUDGET_EXHAUSTED")
             if code == "ANALYSIS_COMPLETE":
                 require(bool(evidence_refs), "EVIDENCE_REQUIRED")
+            if interpretation is not None:
+                require(job.goal["goal_kind"] == "ONEIRIC_REVIEW"
+                        and job.task_detail is not None and bool(job.annotations),
+                        "INTERPRETATION_NOT_AUTHORIZED")
+                from .agenda_c0 import _check as check_oneiric
+                from .contracts import local_digest, ContractError
+                try:
+                    check_oneiric("OneiricAnnotation", interpretation)
+                except ContractError:
+                    raise BridgeError("INVALID_ONEIRIC_ANNOTATION") from None
+                require(local_digest({k: v for k, v in interpretation.items()
+                                      if k != "annotation_id"}) == interpretation["annotation_id"],
+                        "ANNOTATION_DIGEST_MISMATCH")
+                require(interpretation == job.annotations[-1] and
+                        interpretation["source_event_ref"] == job.task_detail["source_event_ref"],
+                        "ONEIRIC_ANNOTATION_BINDING_MISMATCH")
+            if job.goal["goal_kind"] == "ONEIRIC_REVIEW" and code == "ANALYSIS_COMPLETE":
+                require(interpretation is not None, "ONEIRIC_ANNOTATION_REQUIRED")
+            if job.goal["goal_kind"] != "ONEIRIC_REVIEW":
+                require(interpretation is None, "INTERPRETATION_NOT_ALLOWED")
             job.remaining_steps -= 1
             self._spent_steps += 1
             to_state = "PAUSED" if code == "INSUFFICIENT_EVIDENCE" else "COMPLETED"
-            # COMPLETED describes the inquiry, not the truth of a physical claim.
             result = self._transition(job, job.state, to_state, code, key, now)
-            result["outcome"] = {"schema_version": "cog_core_b_outcome_v1-candidate", "code": code,
-                                 "verification": "UNVERIFIED", "evidence_refs": evidence_refs,
-                                 "task_generation": ticket["task_generation"], "grants_authority": False}
-            check_detail("Outcome", result["outcome"])
+            outcome = {
+                "schema_version": "cog_core_b_outcome_v1-candidate",
+                "goal_id": job.goal["goal_id"], "goal_revision": job.goal["goal_revision"],
+                "admission_ref": job.decision["decision_id"],
+                "transition_ref": result["transition"]["transition_id"],
+                "task_ref": job.goal["task_ref"], "context": deepcopy(job.goal["context"]),
+                "code": code,
+                "result_semantics": {
+                    "ANALYSIS_COMPLETE": "INQUIRY_FINISHED_UNVERIFIED",
+                    "INSUFFICIENT_EVIDENCE": "INQUIRY_PAUSED_EVIDENCE",
+                    "ABSTAIN": "ABSTAINED_UNVERIFIED"}[code],
+                "verification": "UNVERIFIED", "evidence_refs": deepcopy(evidence_refs),
+                "task_generation": ticket["task_generation"],
+                "interpretation": deepcopy(interpretation),
+                "annotation_history": deepcopy(job.annotations) if interpretation else [],
+                "grants_authority": False,
+            }
+            trace = {
+                "schema_version": "cog_core_b_cognitive_trace_v1-candidate",
+                "goal_id": job.goal["goal_id"], "goal_revision": job.goal["goal_revision"],
+                "admission_ref": job.decision["decision_id"],
+                "transition_ref": result["transition"]["transition_id"],
+                "context": deepcopy(job.goal["context"]), "task_ref": job.goal["task_ref"],
+                "outcome_digest": digest(outcome), "outcome_code": code,
+                "reason_codes": [code], "result_semantics": outcome["result_semantics"],
+                "evidence_refs": deepcopy(evidence_refs), "task_generation": ticket["task_generation"],
+                "interpretation_digest": digest(interpretation) if interpretation else None,
+                "annotation_chain_digest": digest(job.annotations) if interpretation else None,
+                "provenance_class": job.goal["provenance"]["class"],
+                "policy_revision": job.goal["context"]["policy_revision"],
+                "steps_used": job.goal["budget"]["steps"] - job.remaining_steps,
+                "memory_status": "NOT_CONNECTED", "chronon_link_status": "NOT_CONNECTED",
+                "life_id": None, "privacy_scope": "EPHEMERAL_LOCAL", "verification": "UNVERIFIED",
+                "may_actuate": False, "grants_authority": False,
+            }
+            trace["trace_id"] = digest(trace)
+            outcome["trace_ref"] = trace["trace_id"]
+            result["outcome"] = check_detail("Outcome", outcome)
+            result["cognitive_trace"] = check_detail("CognitiveTraceCoreB", trace)
+            validate_result_bundle(self.schema, result)
             if to_state in TERMINAL:
                 self._release(job)
             self._remember(scoped, fingerprint, result)
@@ -535,12 +677,100 @@ class KernelSession:
             return deepcopy(self._jobs[goal_id].transitions)
 
     def close(self):
+        """Charge last observed running interval, then release and purge locally.
+
+        The returned report is not a Chronon event or durable Life checkpoint.
+        """
         with self._lock:
+            if not self._closed:
+                try:
+                    self._charge_running(self._now())
+                except BridgeError:
+                    # Unknown/regressed time must never be estimated or fabricated.
+                    pass
             self._stop_all("SESSION_CLOSED")
+            report = {"status": "CLOSED_LOCAL_ONLY", "usage": self._usage(),
+                      "life_id": None, "chronon_status": "NOT_CONNECTED"}
             self._closed = True
             self._seen.clear()
             self._jobs.clear()
             self._audit.clear()
+            return report
+
+
+
+def validate_result_bundle(schema: CoreBSchema, bundle: dict) -> dict:
+    """Cross-record causal validation: neither shape nor separate hashes suffice.
+
+    Call at construction and on every future handoff of an outcome/trace pair.
+    A maliciously swapped task, outcome, context or annotation cannot be accepted.
+    Candidate-only; does not establish truth, verified identity or writer receipt.
+    """
+    require(type(bundle) is dict and set(bundle) ==
+            {"transition", "detail", "outcome", "cognitive_trace"}, "RESULT_BUNDLE_SHAPE")
+    transition = schema.check("AgendaTransition", bundle["transition"])
+    detail = check_detail("TransitionDetail", bundle["detail"])
+    outcome = check_detail("Outcome", bundle["outcome"])
+    trace = check_detail("CognitiveTraceCoreB", bundle["cognitive_trace"])
+    context = schema.check("Context", outcome["context"])
+    require(transition["to_state"] == ("PAUSED" if outcome["code"] == "INSUFFICIENT_EVIDENCE"
+                                           else "COMPLETED"), "RESULT_STATE_MISMATCH")
+    for obj in (outcome, trace):
+        require((obj["goal_id"],obj["goal_revision"],obj["admission_ref"],obj["transition_ref"],
+                 obj["context"],obj["task_ref"]) ==
+                (transition["goal_id"],transition["goal_revision"],transition["admission_ref"],
+                 transition["transition_id"],context,detail["task_ref"]), "RESULT_CAUSAL_MISMATCH")
+    require(detail["transition_ref"] == transition["transition_id"], "RESULT_DETAIL_MISMATCH")
+    require(outcome["trace_ref"] == trace["trace_id"] and
+            trace["trace_id"] == digest({k:v for k,v in trace.items() if k != "trace_id"}),
+            "RESULT_TRACE_DIGEST_MISMATCH")
+    require(trace["outcome_digest"] == digest({k:v for k,v in outcome.items() if k != "trace_ref"}),
+            "RESULT_OUTCOME_DIGEST_MISMATCH")
+    require((outcome["code"],outcome["result_semantics"],outcome["evidence_refs"],
+             outcome["task_generation"],context["policy_revision"]) ==
+            (trace["outcome_code"],trace["result_semantics"],trace["evidence_refs"],
+             trace["task_generation"],trace["policy_revision"]), "RESULT_TRACE_MISMATCH")
+    require(trace["interpretation_digest"] ==
+            (digest(outcome["interpretation"]) if outcome["interpretation"] else None),
+            "RESULT_INTERPRETATION_MISMATCH")
+    require(trace["annotation_chain_digest"] ==
+            (digest(outcome["annotation_history"]) if outcome["annotation_history"] else None),
+            "RESULT_ANNOTATION_CHAIN_MISMATCH")
+    require(trace["reason_codes"] == [outcome["code"]], "RESULT_REASON_MISMATCH")
+    require(bool(outcome["interpretation"]) == bool(outcome["annotation_history"]),
+            "RESULT_ANNOTATION_INCOMPLETE")
+    if outcome["interpretation"] is not None:
+        require(outcome["task_ref"] == "cog.task.v1:oneiric-first-step" and
+                outcome["interpretation"]["scope"] == "SYNTHETIC_FIXTURE_ONLY" and
+                outcome["interpretation"]["life_id"] is None and
+                outcome["interpretation"]["chronon_id"] is None,
+                "RESULT_INTERPRETATION_AUTHORITY_MISMATCH")
+        from .agenda_c0 import _check as check_oneiric
+        from .contracts import local_digest, ContractError
+        try:
+            check_oneiric("OneiricAnnotation", outcome["interpretation"])
+        except ContractError:
+            raise BridgeError("INVALID_ONEIRIC_ANNOTATION") from None
+        require(local_digest({k:v for k,v in outcome["interpretation"].items()
+                              if k != "annotation_id"}) == outcome["interpretation"]["annotation_id"],
+                "RESULT_ANNOTATION_DIGEST_MISMATCH")
+        require(outcome["interpretation"] == outcome["annotation_history"][-1],
+                "RESULT_LAST_ANNOTATION_MISMATCH")
+        previous = None
+        for annotation in outcome["annotation_history"]:
+            try:
+                check_oneiric("OneiricAnnotation", annotation)
+            except ContractError:
+                raise BridgeError("INVALID_ONEIRIC_ANNOTATION") from None
+            require(local_digest({k:v for k,v in annotation.items()
+                                  if k != "annotation_id"}) == annotation["annotation_id"],
+                    "RESULT_ANNOTATION_DIGEST_MISMATCH")
+            require(annotation["supersedes_annotation_ref"] == previous and
+                    annotation["source_event_ref"] == outcome["interpretation"]["source_event_ref"]
+                    and annotation["scope"] == "SYNTHETIC_FIXTURE_ONLY",
+                    "RESULT_ANNOTATION_LINEAGE_MISMATCH")
+            previous = annotation["annotation_id"]
+    return deepcopy(bundle)
 
 
 def make_goal(schema: CoreBSchema, *, goal_id: str, task_ref: str, context: dict, clock_domain: str,

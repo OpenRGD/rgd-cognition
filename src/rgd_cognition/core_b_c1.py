@@ -34,7 +34,8 @@ def cue_goal(schema, cue, *, context, created_ns: int, clock_domain: str,
                      provenance_class="SYNTHETIC" if cue["origin"] == "SYNTHETIC" else "DERIVED")
     detail = {"schema_version": "cog_core_b_task_detail_v1-candidate",
               "goal_id": goal["goal_id"], "goal_revision": goal["goal_revision"],
-              "task_ref": goal["task_ref"], "source_cue": deepcopy(cue),
+              "task_ref": goal["task_ref"], "context": deepcopy(context),
+              "source_cue": deepcopy(cue),
               "created_monotonic_ns": created_ns, "deadline_monotonic_ns": cue["expires_at_monotonic_ns"],
               "success_condition": "ANALYSIS_REPORTED_NOT_HYPOTHESIS_CONFIRMED",
               "stop_conditions": ["ORIGINAL_EVIDENCE_EXPIRED", "BUDGET_EXHAUSTED", "CONTEXT_CHANGED"],
@@ -96,7 +97,16 @@ class CoreBAttentionHost:
             package = cue_goal(self.schema, result["cue"], context=ctx, created_ns=created_ns,
                 clock_domain=self.attention.session_id, producer_ref=self.owners.producer(self.owners.attention)[0],
                 budget={"wall_time_ms": 1000, "steps": 2, "subgoals": 0, "depth": 0, "queue_items": 1})
-            decision = self.work.submit(self.owners.attention, package["goal"], key=result["cue"]["cue_id"])
+            # At a fractional ns tick the conservative ceil(start_ms) may be
+            # in the NEXT integer-ms bucket. Do not fabricate a future clock or
+            # renew TTL: explicitly defer without a Work admission/reservation.
+            if self.attention.now() // 1_000_000 < package["goal"]["lifetime"]["created_ms"]:
+                return {"attention": result, "proposal": None,
+                        "deferral": {"reason_code": "CREATION_BUCKET_NOT_REACHED",
+                                     "cue_ref": result["cue"]["cue_id"],
+                                     "original_deadline_ns": result["cue"]["expires_at_monotonic_ns"]}}
+            decision = self.work.submit(self.owners.attention, package["goal"],
+                                        key=result["cue"]["cue_id"], task_detail=package["detail"])
             return {"attention": result, "proposal": {**package, "admission": decision}}
         except (BridgeError, ValueError):
             self.attention.invalidate()
@@ -123,6 +133,7 @@ class CoreBAttentionHost:
         self._paused = False  # Explicit Work resume remains separately required.
 
     def close(self):
-        self.work.close()
+        report = self.work.close()
         self.attention.close()
         self._closed = True
+        return report

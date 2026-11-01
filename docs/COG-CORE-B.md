@@ -181,3 +181,101 @@ Sources: Core #11 README/schema and handoff; Core #12
 `docs/reconciliation/p0/COG_CORE_B_CROSSWALK.md`; Core #13
 `contracts/identity/v0.1.0/COG_EXT_MEM_HANDOFF.md`. Primary JSON Schema resolution
 reference: https://python-jsonschema.readthedocs.io/en/stable/referencing/ .
+
+## Review Closure — 2026-11-01 (candidate, opt-in, NOT normative)
+
+This amendment closes the implementation gaps identified by the COG / Core
+integration review without rewriting COG-01/02/C0/C1 or the seven closed
+Core-B record types. Everything below applies only to the new session-scoped
+Cognition/Work consumer. Cross-owner semantic review remains necessary.
+
+### R01 — Bound outcome and cognitive trace
+
+`finish()` returns an inseparable local result bundle containing the Core-B
+`AgendaTransition`, versioned `TransitionDetail`, versioned `Outcome` and
+**`CognitiveTraceCoreB`**. The new trace identifier is
+`cog_core_b_cognitive_trace_v1-candidate`; it is a separate scoped candidate,
+**not** COG-01's unchanged `cog_trace_v0.1-candidate` (which requires a
+`CognitiveProposal` from a different flow and has a different policy schema).
+
+`Outcome` now carries its own `goal_id`, `goal_revision`, `admission_ref`,
+`transition_ref`, exact Context, `task_ref`, evidence references, task generation,
+verification state, final interpretation and its local annotation chain. The
+trace carries those same causal identifiers, a digest of the outcome *excluding*
+the trace pointer, the final interpretation digest and entire annotation-chain
+digest, reason codes, epistemic provenance and limited step usage. The outcome
+references the trace by its digest, without circular hashing. Both declare
+`UNVERIFIED`, `life_id=null`, Chronon `NOT_CONNECTED`, no actuation and no
+bearer grant. No private chain of reasoning, audio or video is recorded.
+
+`validate_result_bundle()` validates **relationships**, not merely independent
+schemas: task/goal/revision/admission/context/transition equality, cross-record
+hashes, result semantics, evidence, trace linkage, and the ordered local oneiric
+annotation succession. This must be called by any future consumer before using
+a returned outcome. The hashes are local integrity commitments, NOT issuer
+signatures or proven authorship, and do not make evidence factually true.
+
+Local invalidations due to context loss, fencing changes, expiry, clock errors
+or session close produce a versioned **`InvalidationReport`** tied to the
+original admitted context and goal. They are intentionally **not** forged as
+new Core-B `AgendaTransition` or Chronon under a revoked/expired context.
+
+### ONEIRIC-001 — Review outcome actually connected to Work
+
+A second typed local task companion `OneiricTaskDetail` is provided for
+`cog.task.v1:oneiric-first-step`. Its initial proposition is provisional and
+synthetic. An Imagination producer may **propose** this goal but cannot admit,
+start, review or complete it. The same `KernelSession` admission and Work owner
+handle it within the same finite aggregate reservation system.
+
+Work's `review_oneiric()` invokes the **actual pre-existing C0** pure
+`oneiric_review()` function, only with synthetic fixture tags and a bound Work
+execution ticket. Each review spends a reserved step, respects the fixed source
+reference, and links to the previous local annotation. Exact duplicate retries
+are inert; altered retries conflict. The final `finish(..., interpretation=...)`
+requires the exact last recorded annotation for `ANALYSIS_COMPLETE`; otherwise
+completion is refused. The returned outcome retains **the entire bounded local
+annotation history** as well as the last label, and its trace commits to both.
+A review can refute or leave the "first step" uncertain: it never proves
+locomotion or creates a durable Life memory. Other goal types cannot attach an
+oniric interpretation. No history writer, milestone or skill update exists.
+
+### R04 — Invalidation, wall budget and closing
+
+Every accepted Work API boundary now **charges elapsed running time before**
+checking a potentially changed/revoked Context. Context loss, session/fence
+changes, resource budget exhaustion, administrative close and parent/terminal
+release no longer erase already measured consumption. Session close returns a
+**local-only** usage report after accounting; it does not create a historical
+commit. Paused time is not billed as running. Charging remains bounded by the
+admitted wall allowance, and measured wall overrun is NOT actively preempted:
+untrusted or long-running providers require a separate supervised worker.
+
+### R05 — Fractional millisecond handoff
+
+The original C1 cue deadline stays authoritative for the synthetic replay.
+`cue_goal()` uses ceil(start_ns/1e6) and floor(expiry_ns/1e6), so conversion
+cannot extend the evidence deadline. A new full `CoreBAttentionHost.ingest()`
+test exercises fractional-nanosecond creation. When the conservative created_ms
+lies in the next millisecond bucket and the synchronous host cannot yet observe
+that bucket, the host returns `deferral.reason_code=CREATION_BUCKET_NOT_REACHED`
+with **no Work admission and no reservation**. There is no silent wait, time
+fabrication, auto-retry or retroactive Chronograf anchor. The Attention cue
+quota may be consumed even when deferred; the caller must account for this
+rather than assuming eventual execution.
+
+### Conformance and remaining restrictions
+
+`tests_core_b/test_review_closure.py` and additional real-C1 integration tests
+cover: complete outcome/trace binding, swapped outcomes, manipulated digest
+and supersession chains, oneiric review ownership/cost/idempotency, missing
+annotation, consumed time before invalidation and during close, pause time,
+overrun, and fractional synchronous handoff with no false admission.
+
+The seven Core-B schemas and source hash are unchanged; local typed companions
+remain candidates for joint review. The implementation still assumes a trusted
+in-process Python host, not authenticated distributed owners. No I/O, Life
+activation, Chronon writer, motor control, network tool or voice output is
+exposed. Future verified Life/Chronon/Memory must arrive through separate
+reviewed authorities and effect gates. Local traces are not persistent and may
+be lost on a restart. Any claim of long-term autobiography would be premature.
