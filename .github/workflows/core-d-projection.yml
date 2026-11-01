@@ -1,0 +1,83 @@
+name: COG Core-D Oneiric and Memory draft conformance
+on:
+  push:
+    branches: [main, 'feat/**']
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: cog-core-d-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  conformance:
+    name: cog-core-d-py${{ matrix.python }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ['3.10', '3.12']
+    env:
+      RGD_CORE_CHECKOUT: ${{ github.workspace }}/.upstream/core
+      CORE_B_CHECKOUT: ${{ github.workspace }}/.upstream/core-b
+      CORE_D_CHECKOUT: ${{ github.workspace }}/.upstream/core-d
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          repository: OpenRGD/openrgd
+          ref: afe1a831b950a4e6560f0285a0103fc4eaa343b7
+          path: .upstream/core
+          persist-credentials: false
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          repository: OpenRGD/openrgd
+          ref: 55a034ceb1cdaab8bed6848fcdde85c9436bc9e0
+          path: .upstream/core-b
+          persist-credentials: false
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          repository: OpenRGD/openrgd
+          ref: 7b15fda5c825f9359ce0045377ec38364de19efb
+          path: .upstream/core-d
+          persist-credentials: false
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
+        with:
+          python-version: ${{ matrix.python }}
+      - name: Verify independent pins and install reviewed deps
+        run: |
+          test "$(git -C .upstream/core rev-parse HEAD)" = afe1a831b950a4e6560f0285a0103fc4eaa343b7
+          test "$(git -C .upstream/core-b rev-parse HEAD)" = 55a034ceb1cdaab8bed6848fcdde85c9436bc9e0
+          test "$(git -C .upstream/core-d rev-parse HEAD)" = 7b15fda5c825f9359ce0045377ec38364de19efb
+          python -m pip install -r requirements-ci.txt -r requirements-rgd-ci.txt
+          python -m pip install --no-build-isolation --no-deps -e .upstream/core -e .
+          python -m pip check
+      - name: Actual COG CORE-D producer/consumer tests
+        run: |
+          python -m unittest discover -s tests_core_d -v
+          python -O -m unittest discover -s tests_core_d -v
+      - name: CORE-D official synthetic fixture conformance (NOT history proof)
+        run: |
+          python .upstream/core-d/contracts/temporal-memory/v0.1.0/validate.py
+          python .upstream/core-d/contracts/temporal-memory/v0.1.0/conformance.py
+      - name: COG CORE-B and pre-existing RGD real Core regressions
+        run: |
+          python -m unittest discover -s tests_core_b -v
+          python -m unittest discover -s tests -v
+          python -m unittest discover -s tests_integration -v
+      - name: Strict additive PR scope
+        run: |
+          git fetch --no-tags --depth=1 origin a2526ba414409cc92641dc95bbddd6564317fcc4
+          python tools/check_core_d_scope.py
+          git diff --check a2526ba414409cc92641dc95bbddd6564317fcc4 HEAD
+      - name: Installed wheel smoke outside checkout
+        run: |
+          python -m pip wheel --no-build-isolation --no-deps . -w dist
+          python -m venv /tmp/cog-core-d-wheel
+          /tmp/cog-core-d-wheel/bin/python -m pip install -r requirements-ci.txt
+          /tmp/cog-core-d-wheel/bin/python -m pip install --no-deps dist/*.whl
+          cd /tmp
+          /tmp/cog-core-d-wheel/bin/python -m rgd_cognition.core_d_demo --core-b-checkout "$CORE_B_CHECKOUT" --core-d-checkout "$CORE_D_CHECKOUT"
