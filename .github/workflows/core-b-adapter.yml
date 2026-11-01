@@ -1,0 +1,43 @@
+name: COG Core-B adapter conformance
+on:
+  push:
+    branches: ['feat/cog-core-b-adapter-conformance']
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  inputs:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          repository: OpenRGD/openrgd
+          ref: afe1a831b950a4e6560f0285a0103fc4eaa343b7
+          path: .upstream/core
+          persist-credentials: false
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          repository: OpenRGD/openrgd
+          ref: 55a034ceb1cdaab8bed6848fcdde85c9436bc9e0
+          path: .upstream/core-b
+          persist-credentials: false
+      - name: Export exact public source inputs without git credentials
+        run: |
+          test "$(git -C .upstream/core rev-parse HEAD)" = afe1a831b950a4e6560f0285a0103fc4eaa343b7
+          test "$(git -C .upstream/core-b rev-parse HEAD)" = 55a034ceb1cdaab8bed6848fcdde85c9436bc9e0
+          mkdir -p conformance-inputs
+          git archive --format=tar HEAD > conformance-inputs/cog.tar
+          git -C .upstream/core archive --format=tar HEAD > conformance-inputs/core.tar
+          git -C .upstream/core-b archive --format=tar HEAD contracts/kernel/v0.1.0 > conformance-inputs/core-b.tar
+          sha256sum conformance-inputs/*.tar > conformance-inputs/SHA256SUMS
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: core-b-reviewed-inputs
+          path: conformance-inputs/
+          retention-days: 2
+          if-no-files-found: error
