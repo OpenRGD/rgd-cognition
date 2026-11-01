@@ -1,5 +1,4 @@
-"""CI-only exact additive scope guard for COG-D candidate stacked on CORE-B closure."""
-from pathlib import Path
+"""CI-only exact bounded scope guard for COG-D stacked on CORE-B closure."""
 import subprocess
 BASE="a2526ba414409cc92641dc95bbddd6564317fcc4"
 allowed={
@@ -12,11 +11,15 @@ allowed={
 }
 rows=subprocess.check_output(["git","diff","--name-status",BASE,"HEAD"],text=True).splitlines()
 seen=set()
+saw_guard=False
 for row in rows:
-    status, path=row.split("\t",1)
+    status,path=row.split("\t",1)
+    if path=="tools/check_core_b_scope.py" and status=="M":
+        saw_guard=True
+        continue
     if status!="A" or path not in allowed:
         raise SystemExit("UNEXPECTED_SCOPE_CHANGE:"+path)
     seen.add(path)
-if seen!=allowed:
-    raise SystemExit("MISSING_SCOPE_PATHS:"+str(sorted(allowed-seen)))
-print("CORE-D integration is additive, pinned and leaves all COG CORE-B/C1 files unchanged.")
+if seen!=allowed or not saw_guard:
+    raise SystemExit("MISSING_SCOPE_PATHS:"+str(sorted(allowed-seen))+" guard="+str(saw_guard))
+print("CORE-D integration adds only six opt-in files and a narrowly bounded CORE-B CI guard revision.")

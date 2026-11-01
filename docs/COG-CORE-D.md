@@ -14,7 +14,7 @@ This is a **read-only, synthetic, session-scoped producer/consumer conformance**
 | CORE-D temporal/memory candidate | `7b15fda5c825f9359ce0045377ec38364de19efb`, exact schema blob `9ed412fb8749cd7aeb8eeb23f2305d98ecfc0de8` | Optional schema-only validation, **no Core runtime import** |
 | COG–CORE-B Review Closure | `a2526ba414409cc92641dc95bbddd6564317fcc4` | **New exact COG baseline**, replaces the old compatibility test pin `877a450...` |
 
-All original COG PRs #1/#3/#4/#5 and PR #6 code remain unchanged. This PR is separately stacked on COG #6. The CORE-D GitHub Actions workflow originally pinned COG `877a450...`, so green CORE-D CI on that pin is legacy compatibility evidence only. The **new COG workflow** must test the exact new COG stack; the Core owner can separately decide to update its own CI pin.
+All original COG PRs #1/#3/#4/#5 and PR #6 **runtime/schema code** remain unchanged. This PR is separately stacked on COG #6. The only pre-existing path edited in this stack is a CI-only scope checker, adapted to recognize exactly the new CORE-D files while still rejecting any earlier code changes. The CORE-D GitHub Actions workflow originally pinned COG `877a450...`, so green CORE-D CI on that pin is legacy compatibility evidence only. The **new COG workflow** must test the exact new COG stack; the Core owner can separately decide to update its own CI pin.
 
 ## Data boundary — actual COG producer to CORE-D shapes
 
@@ -68,7 +68,7 @@ The API does **not** create a shape-valid CORE-D `HistoryCommitRequest`, synthes
 1. Approve/modify the current COG outcome and `CognitiveTraceCoreB` local profile, including the rule `COMPLETED ≠ hypothesis SUPPORTED`.
 2. Agree which local projection identifier, evidence hash encoding and typed `supersedes` mapping can be adopted for actual Memory/History and which require a new version; local digests here are not universal Chronon identifiers.
 3. Define a true authenticated `HistoryCommitRequest` caller and writer, role fencing, mutable policy revocation, durable idempotency and idempotent receipt lookup under Core-C/History governance.
-4. Decide whether to persist each oneriic revision, a summarized commitment, or both; if the raw evidence is unavailable, label its retrieval limits, not fabricate evidence. Define retention and legitimate erasure constraints.
+4. Decide whether to persist each oneiric revision, a summarized commitment, or both; if the raw evidence is unavailable, label its retrieval limits, not fabricate evidence. Define retention and legitimate erasure constraints.
 5. Agree on a verified knowledge-time source for bitemporal query; never promote a local monotonic timestamp into Chronograf history.
 
 ## Conformance gates and limitations
