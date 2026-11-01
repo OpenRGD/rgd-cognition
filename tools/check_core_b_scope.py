@@ -32,6 +32,12 @@ def diff(left, right):
         ['git', 'diff', '--name-status', left, right], text=True).splitlines()]
 
 
+# GitHub PR synthetic-merge checkout is shallow: the reviewed CORE-B base
+# commit is not always present, even though the merge points to that parent.
+# Fetch only this exact public baseline for verification; never move a branch.
+subprocess.run(['git', 'fetch', '--no-tags', '--depth=1', 'origin', CORE_B_BASE],
+               check=True, stdout=subprocess.DEVNULL)
+
 for status, path in diff(C1_BASE, CORE_B_BASE):
     if status != 'A' or not path.startswith(CORE_B_PREFIXES):
         raise SystemExit('CORE_B_BASELINE_DRIFT:' + path)
