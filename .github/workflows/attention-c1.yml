@@ -1,0 +1,43 @@
+name: COG-C1 attention and autonomous goals
+on:
+  push:
+    branches: [main, 'feat/**']
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: attention-c1-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  attention:
+    name: attention-c1-py${{ matrix.python }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ['3.10', '3.12']
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # inherited reviewed pin; runtime refresh separate
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
+        with:
+          python-version: ${{ matrix.python }}
+      - name: Install dependencies and candidate
+        run: |
+          python -m pip install -r requirements-ci.txt
+          python -m pip install --no-build-isolation --no-deps -e .
+      - name: Deterministic attention and adversarial inputs
+        run: python -m unittest discover -s tests -p test_attention_c1.py -v
+      - name: Numeric observations to autonomous Work goals
+        run: python -m rgd_cognition.attention_c1_demo --events 1000
+      - name: Wheel and schemas outside checkout
+        run: |
+          python -m pip wheel --no-build-isolation --no-deps . -w dist
+          python -m venv /tmp/cog-c1-wheel
+          /tmp/cog-c1-wheel/bin/python -m pip install -r requirements-ci.txt
+          /tmp/cog-c1-wheel/bin/python -m pip install --no-deps dist/*.whl
+          cd /tmp
+          /tmp/cog-c1-wheel/bin/python -m rgd_cognition.attention_c1_demo --events 12
