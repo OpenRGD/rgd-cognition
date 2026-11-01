@@ -1,15 +1,26 @@
 name: COG Core-B adapter conformance
 on:
   push:
-    branches: ['feat/cog-core-b-adapter-conformance']
+    branches: [main, 'feat/**']
   pull_request:
   workflow_dispatch:
 permissions:
   contents: read
+concurrency:
+  group: core-b-adapter-${{ github.ref }}
+  cancel-in-progress: true
 jobs:
-  inputs:
+  conformance:
+    name: core-b-adapter-py${{ matrix.python }}
     runs-on: ubuntu-24.04
-    timeout-minutes: 10
+    timeout-minutes: 12
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ['3.10', '3.12']
+    env:
+      CORE_B_CHECKOUT: ${{ github.workspace }}/.upstream/core-b
+      RGD_CORE_CHECKOUT: ${{ github.workspace }}/.upstream/core
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
         with:
@@ -26,18 +37,36 @@ jobs:
           ref: 55a034ceb1cdaab8bed6848fcdde85c9436bc9e0
           path: .upstream/core-b
           persist-credentials: false
-      - name: Export exact public source inputs without git credentials
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
+        with:
+          python-version: ${{ matrix.python }}
+      - name: Verify independent pins and install reviewed dependencies
         run: |
           test "$(git -C .upstream/core rev-parse HEAD)" = afe1a831b950a4e6560f0285a0103fc4eaa343b7
           test "$(git -C .upstream/core-b rev-parse HEAD)" = 55a034ceb1cdaab8bed6848fcdde85c9436bc9e0
-          mkdir -p conformance-inputs
-          git archive --format=tar HEAD > conformance-inputs/cog.tar
-          git -C .upstream/core archive --format=tar HEAD > conformance-inputs/core.tar
-          git -C .upstream/core-b archive --format=tar HEAD contracts/kernel/v0.1.0 > conformance-inputs/core-b.tar
-          sha256sum conformance-inputs/*.tar > conformance-inputs/SHA256SUMS
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
-        with:
-          name: core-b-reviewed-inputs
-          path: conformance-inputs/
-          retention-days: 2
-          if-no-files-found: error
+          python -m pip install -r requirements-ci.txt -r requirements-rgd-ci.txt
+          python -m pip install --no-build-isolation --no-deps -e .upstream/core -e .
+          python -m pip check
+      - name: Genuine Core-B adapter, fixtures, ownership and reservation tests
+        run: |
+          python -m unittest discover -s tests_core_b -v
+          python -O -m unittest discover -s tests_core_b -v
+      - name: Unchanged COG-01/02/C0/C1 and actual baseline Core regressions
+        run: |
+          python -m unittest discover -s tests -v
+          python -m unittest discover -s tests_integration -v
+      - name: Preserve existing files and schema pins
+        run: |
+          git fetch --no-tags --depth=1 origin a8ae925c9cacbce8bd7a6db01833d4159445d47a
+          python tools/check_core_b_scope.py
+          git diff --check a8ae925c9cacbce8bd7a6db01833d4159445d47a HEAD
+      - name: Actual C1 numeric producer to new ABI, without devices
+        run: python -m rgd_cognition.core_b_demo --core-b-checkout "$CORE_B_CHECKOUT"
+      - name: Wheel with local detail schemas outside checkout
+        run: |
+          python -m pip wheel --no-build-isolation --no-deps . -w dist
+          python -m venv /tmp/core-b-wheel
+          /tmp/core-b-wheel/bin/python -m pip install -r requirements-ci.txt
+          /tmp/core-b-wheel/bin/python -m pip install --no-deps dist/*.whl
+          cd /tmp
+          /tmp/core-b-wheel/bin/python -m rgd_cognition.core_b_demo --core-b-checkout "$CORE_B_CHECKOUT"
