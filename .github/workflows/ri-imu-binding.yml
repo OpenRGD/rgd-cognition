@@ -1,0 +1,73 @@
+name: COG RI-02 exact IMU evidence binding
+on:
+  push:
+    branches: [main, 'feat/**']
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: cog-ri02-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  conformance:
+    name: ri-imu-binding-py${{ matrix.python }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ['3.10', '3.12']
+    env:
+      RI_CHECKOUT: ${{ github.workspace }}/.upstream/ri
+      CONSOLE_CHECKOUT: ${{ github.workspace }}/.upstream/console
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          repository: OpenRGD/rgd-reality-ingress
+          ref: 5372f758df79c93fc887f3858d878635447f4a4d
+          path: .upstream/ri
+          persist-credentials: false
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          repository: OpenRGD/rgd-console
+          ref: a0ef857cf425c1bb14ad8f62acec21f8c1324866
+          path: .upstream/console
+          persist-credentials: false
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
+        with:
+          python-version: ${{ matrix.python }}
+      - name: Verify independent revision pins and install offline consumer
+        run: |
+          test "$(git -C .upstream/ri rev-parse HEAD)" = 5372f758df79c93fc887f3858d878635447f4a4d
+          test "$(git -C .upstream/console rev-parse HEAD)" = a0ef857cf425c1bb14ad8f62acec21f8c1324866
+          python -m pip install -r requirements-ci.txt
+          python -m pip install --no-build-isolation --no-deps -e . -e .upstream/ri
+          python -m pip check
+      - name: Genuine RI generic sample to Console/C1 binding
+        run: |
+          python -m unittest discover -s tests_ri02 -v
+          python -O -m unittest discover -s tests_ri02 -v
+      - name: Original RI and COG RI-01 plus Cognitive Foundation regression
+        run: |
+          python -m unittest discover -s tests_ri -v
+          python -m unittest discover -s .upstream/ri/tests -v
+          python -m unittest discover -s tests -v
+      - name: Exact candidate pins and strict stacked scope
+        run: |
+          python tools/check_ri02_scope.py
+          python tools/check_ri_scope.py
+          python tools/check_core_b_scope.py
+          python tools/check_core_d_scope.py
+          git diff --check 29a8a0b60ce365d2a0fd1f38313a3a319793bc6a HEAD
+      - name: Wheel and closed output schema in clean installation
+        run: |
+          python -m pip wheel --no-build-isolation --no-deps . -w dist
+          python -m venv /tmp/ri02-wheel
+          /tmp/ri02-wheel/bin/python -m pip install -r requirements-ci.txt
+          /tmp/ri02-wheel/bin/python -m pip install --no-deps dist/*.whl
+          cd /tmp
+          /tmp/ri02-wheel/bin/python -c 'from rgd_cognition.ri_imu_binding import ConsoleImuSchema, IMUBindingPolicy, validate_binding_record; print("RI02 installed-wheel API and closed schema PASS")'
