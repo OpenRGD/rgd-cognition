@@ -1,0 +1,29 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:openrgd:cognition:ri-reference-notice:v0.1-candidate",
+  "$comment": "COG local non-normative read-only metadata notice. RI reference is independently checked against exact RI PR4 schema. No InputEvent, GoalAdmission, real identity or Chronon.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "reference", "local_alias", "session_scope", "source_authentication", "source_time_quality", "calibration_status", "epistemic_status", "evidence_state", "freshness", "time_alignment", "receipt_age_ns", "payload_checked_at_cog", "perception_status", "life_id", "chronon_id", "may_actuate", "can_generate_goal", "grants_authority"],
+  "properties": {
+    "schema_version": {"const": "cog_ri_reference_notice_v0.1-candidate"},
+    "reference": {"type": "object", "description": "Validated independently using pinned upstream RI contract. The full unmodified original reference is preserved."},
+    "local_alias": {"type": "string", "minLength": 1, "maxLength": 256},
+    "session_scope": {"const": "SESSION_SCOPED_UNBOUND"},
+    "source_authentication": {"const": "NOT_VERIFIED"},
+    "source_time_quality": {"const": "UNKNOWN"},
+    "calibration_status": {"const": "UNVERIFIED"},
+    "epistemic_status": {"const": "UNKNOWN"},
+    "evidence_state": {"enum": ["UNKNOWN", "AVAILABLE", "UNAVAILABLE"]},
+    "freshness": {"enum": ["UNKNOWN", "FRESH", "STALE"]},
+    "time_alignment": {"enum": ["HOST_SAME_BOOT_ASSERTED", "NOT_ESTABLISHED"]},
+    "receipt_age_ns": {"anyOf": [{"type": "integer", "minimum": 0}, {"type": "null"}]},
+    "payload_checked_at_cog": {"type": "boolean"},
+    "perception_status": {"const": "NOT_CONNECTED"},
+    "life_id": {"type": "null"},
+    "chronon_id": {"type": "null"},
+    "may_actuate": {"const": false},
+    "can_generate_goal": {"const": false},
+    "grants_authority": {"const": false}
+  }
+}
