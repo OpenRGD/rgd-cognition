@@ -1,0 +1,42 @@
+name: Temporary COG-RI-02 reviewed source inputs
+on:
+  push:
+    branches: [feat/cog-ri-02-imu-evidence-binding]
+permissions:
+  contents: read
+jobs:
+  export-inputs-only:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: 29a8a0b60ce365d2a0fd1f38313a3a319793bc6a
+          persist-credentials: false
+          path: cog
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          repository: OpenRGD/rgd-reality-ingress
+          ref: 5372f758df79c93fc887f3858d878635447f4a4d
+          persist-credentials: false
+          path: ri
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          repository: OpenRGD/rgd-console
+          ref: a0ef857cf425c1bb14ad8f62acec21f8c1324866
+          persist-credentials: false
+          path: console
+      - name: Read-only source archive; not implementation validation
+        run: |
+          tar -czf cog-reviewed.tar.gz -C cog --exclude=.git .
+          tar -czf ri-reviewed.tar.gz -C ri --exclude=.git .
+          tar -czf console-imu-reviewed.tar.gz -C console contracts/console/v1/imu-observation.v0.1.schema.json services/api/src/imu.rs docs/IMU-LIVE-FOUNDATION-v05.md
+          sha256sum *.tar.gz > INPUT_SHA256SUMS
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: cog-ri-02-reviewed-inputs
+          path: |
+            cog-reviewed.tar.gz
+            ri-reviewed.tar.gz
+            console-imu-reviewed.tar.gz
+            INPUT_SHA256SUMS
+          retention-days: 1
