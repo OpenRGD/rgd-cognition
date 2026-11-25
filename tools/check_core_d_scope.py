@@ -15,6 +15,8 @@ RI_ADDITIONS = {
     "tools/check_ri_scope.py", ".github/workflows/ri-cognition.yml",
 }
 CI_GUARDS = {"tools/check_core_b_scope.py", "tools/check_core_d_scope.py"}
+subprocess.run(["git", "fetch", "--no-tags", "--depth=1", "origin", BASE],
+               check=True, stdout=subprocess.DEVNULL)
 subprocess.run(["git", "fetch", "--no-tags", "--depth=1", "origin", CORE_D_BASE],
                check=True, stdout=subprocess.DEVNULL)
 

@@ -31,7 +31,7 @@ def diff(left, right):
         ["git", "diff", "--name-status", left, right], text=True).splitlines()]
 
 
-for sha in (CORE_B_BASE, CORE_D_BASE, "29a8a0b60ce365d2a0fd1f38313a3a319793bc6a"):
+for sha in (C1_BASE, CORE_B_BASE, CORE_D_BASE, "29a8a0b60ce365d2a0fd1f38313a3a319793bc6a"):
     subprocess.run(["git", "fetch", "--no-tags", "--depth=1", "origin", sha],
                    check=True, stdout=subprocess.DEVNULL)
 for status, path in diff(C1_BASE, CORE_B_BASE):
