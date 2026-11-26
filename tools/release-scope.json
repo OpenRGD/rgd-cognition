@@ -1,0 +1,18 @@
+{
+  "version": "cog-release-scope-v1",
+  "baseline": "b601674bf3a539ce029e1c2253c2ae4b49e291e9",
+  "baseline_tree": "aec46c865420d0d975fef4ca420e973e8d723ae3",
+  "modified": [
+    "README.md",
+    "SECURITY.md",
+    "docs/ROADMAP.md",
+    "tools/check_rc02a_scope.py"
+  ],
+  "added": [
+    "docs/COG-RC-03C.md",
+    "tools/check_release_scope.py",
+    "tools/release-scope.json",
+    "tests_release/test_release_scope.py",
+    ".github/workflows/release-readiness.yml"
+  ]
+}

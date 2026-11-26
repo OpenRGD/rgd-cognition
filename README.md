@@ -1,13 +1,19 @@
 # OpenRGD Cognition
 
-**COG-0.1 Foundation / 0.1.0a1 — candidate, non-normative, offline lab.**
+**COG-0.1 / 0.1.0a1 — consolidated candidate, non-normative, offline lab.**
+
+The reviewed candidate includes RGD context, C1 Attention, one opt-in Core-B Work
+admission, synthetic Core-D Oneiric projection, RI reference/binding and RC02A
+lifecycle/result hardening. C0 is a historical lab path, not a second runtime
+admission. The default CLI remains the original synthetic Foundation replay.
+[Consolidation and packaging](docs/COG-RC-03C.md) · [Milestones](docs/ROADMAP.md).
 
 A first executable foundation for OpenRGD cognitive orchestration, not a complete
 intelligent robot, a deployed daemon, or a wrapper that gives an LLM motor access.
 The current reasoner is deterministic and deliberately limited. No language model,
 Chronon store, physical identity verifier, Voice device or remote GPU is connected.
 
-## What works in this PR
+## Foundation (original laboratory path)
 
 ```text
 Typed input -> unbound context -> bounded attention queue -> memory availability
@@ -68,7 +74,8 @@ See [SECURITY.md](SECURITY.md) and [local verification](docs/VALIDATION.md).
 
 The five RGD microkernels — Safety, Life, Work, Relation, Imagination — remain
 first-class architecture owned by OpenRGD, not subsystems whose authority this
-repository absorbs. None is implemented or reinstated in the Canonical Core here.
+repository absorbs. The COG-local Core-B candidate owns bounded Work admission in its session; no
+canonical ABI promotion or Core authority is implied.
 Chronograf/Chronon own time/history; Memory owns projections; World providers own
 predictions; the independent Somatic safety path owns any future physical execution.
 
@@ -79,5 +86,6 @@ predictions; the independent Somatic safety path owns any future physical execut
 
 All changes are proposed through branches and pull requests. Do not merge/release,
 register this module in the Console, create Life identities, or deploy on Paky-01
-as a consequence of this foundation PR alone. Server-side branch protection must
-be configured separately; a documented PR policy does not enforce it.
+as a consequence of this foundation PR alone. The protected-main ruleset is active (operator-managed); review and applicable
+checks are still required. Documentation alone cannot enforce host isolation or
+authorize deployment.

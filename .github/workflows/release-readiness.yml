@@ -1,0 +1,68 @@
+name: COG RC03C candidate packaging and release scope
+on:
+  push:
+    branches: [main, 'feat/**']
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: cog-release-readiness-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  candidate:
+    name: release-readiness-py${{ matrix.python }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ['3.10', '3.12']
+    env:
+      SOURCE_DATE_EPOCH: '946684800'
+      PYTHONHASHSEED: '0'
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
+        with:
+          python-version: ${{ matrix.python }}
+      - name: Verify reviewed delta and historic RC02A scope
+        run: |
+          python -m unittest discover -s tests_release -v
+          python -O -m unittest discover -s tests_release -v
+          python tools/check_rc02a_scope.py
+      - name: Stage reviewed version-pinned dependency wheels
+        run: |
+          mkdir -p /tmp/cog-deps /tmp/cog-a /tmp/cog-b /tmp/cog-wheel-a /tmp/cog-wheel-b candidate-artifacts
+          python -m pip download --only-binary=:all: -r requirements-ci.txt -d /tmp/cog-deps
+          python -m pip install --no-index --find-links /tmp/cog-deps -r requirements-ci.txt
+          git archive HEAD | tar -x -C /tmp/cog-a
+          git archive HEAD | tar -x -C /tmp/cog-b
+          git rev-parse HEAD > candidate-artifacts/test-checkout-commit.txt
+          git rev-parse 'HEAD^{tree}' > candidate-artifacts/source-tree.txt
+          git ls-tree -r HEAD > candidate-artifacts/source-inventory.txt
+          (cd /tmp/cog-deps && sha256sum *.whl | sort) > candidate-artifacts/dependency-wheel-sha256.txt
+          python -m pip freeze --all > candidate-artifacts/build-environment.txt
+      - name: Compare two clean wheels within the same pinned runner environment
+        run: |
+          python -m pip wheel --no-index --no-build-isolation --no-deps /tmp/cog-a -w /tmp/cog-wheel-a
+          python -m pip wheel --no-index --no-build-isolation --no-deps /tmp/cog-b -w /tmp/cog-wheel-b
+          cmp /tmp/cog-wheel-a/*.whl /tmp/cog-wheel-b/*.whl
+          cp /tmp/cog-wheel-a/*.whl candidate-artifacts/
+          (cd candidate-artifacts && sha256sum *.whl > wheel-sha256.txt)
+          echo 'REPEATED_CLEAN_WHEEL_MATCH_PASS'
+      - name: Install wheel offline and run synthetic CLI outside checkout
+        run: |
+          python -m venv /tmp/cog-release-smoke
+          /tmp/cog-release-smoke/bin/python -m pip install --no-index --find-links /tmp/cog-deps -r requirements-ci.txt
+          /tmp/cog-release-smoke/bin/python -m pip install --no-index --no-deps candidate-artifacts/*.whl
+          /tmp/cog-release-smoke/bin/python -m pip check
+          cd /tmp
+          /tmp/cog-release-smoke/bin/python -m rgd_cognition demo --events 1000
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: offline-candidate-py${{ matrix.python }}
+          path: candidate-artifacts/
+          retention-days: 7

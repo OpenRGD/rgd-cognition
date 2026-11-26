@@ -1,4 +1,4 @@
-# Security boundary — COG-0.1 Foundation
+# Security boundary — consolidated COG-0.1 candidate
 
 Status: candidate threat model, **not a safety certification**.
 
@@ -10,7 +10,7 @@ source descriptions, model responses and supplied reference metadata as untruste
 DATA. A local alias, reference hash, relationship claim or familiar voice is not
 an authenticated security principal. No source ref is dereferenced by this code.
 
-Implemented defenses: closed schemas, bounded serialization, no arbitrary output
+Implemented Foundation defenses: closed schemas, bounded serialization, no arbitrary output
 text from providers, reference-membership checks (not evidence verification),
 privacy DENY before queuing, per-host alias isolation, bounded queues/deduplication,
 explicit UNBOUND and NOT_CONNECTED states, no raw-input trace, limited deterministic
@@ -18,14 +18,19 @@ renderer, no runtime network/process/device integrations. Code regression tests
 inspect imports and run replay with socket/Popen disabled; they cover exercised
 paths only, not all dependency or operating-system behavior.
 
-## Not established by this PR
+The opt-in Core-B path adds aggregate reservations, session pause, typed
+work tickets and result consistency. Core-D projection is synthetic/volatile.
+RI01/02 match supplied authorized content, not source authentication or verified
+Life. COG-02 performs pinned canonical source-integrity verification only;
+source hashes do not prove installed capability or identity. C0 remains legacy.
+
+## Not established by this candidate
 
 - No OS sandbox, identity authentication, signed grants, kernel-level syscall or
   network prohibition is installed. A Python process has its launcher's privileges.
 - A supplied `origin=PHYSICAL` is a declared label, not verified physical evidence.
   `source_time` is preserved; clock synchronization/acquisition freshness is unknown.
-- No canonical RGD hash check, registry receipt, Life binding or Chronon writer is
-  verified. `context_revision` and proposal/trace hashes use a LOCAL serialization
+- No registry receipt, positive Life binding or Chronon writer is verified. `context_revision` and proposal/trace hashes use a LOCAL serialization
   recipe; they are not JCS, OpenRGD source roots or signatures.
 - In-process provider code is trusted code. Exception handling and post-return
   budgets cannot sandbox malicious or non-returning Python code. Do not load plugins.
@@ -48,3 +53,7 @@ a separate Somatic RFC, independent authorization and physical safety validation
 Report suspected issues privately to the repository maintainers using GitHub's
 available private reporting/contact facilities; do not publish private robot logs,
 secrets, biometric data or exploitable credentials in public issues.
+
+See [RC03C packaging/verification](docs/COG-RC-03C.md) and the [runtime design
+issue](https://github.com/OpenRGD/rgd-cognition/issues/12). No host sandbox has
+been installed by packaging or runtime planning.
