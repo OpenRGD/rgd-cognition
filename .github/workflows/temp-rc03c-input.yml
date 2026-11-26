@@ -1,0 +1,21 @@
+name: Temporary RC03C exact source export
+on:
+  push:
+    branches: [feat/cog-rc03c-release-readiness]
+permissions:
+  contents: read
+jobs:
+  snapshot:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: b601674bf3a539ce029e1c2253c2ae4b49e291e9
+          persist-credentials: false
+      - name: Export only reviewed public source
+        run: git archive HEAD -o reviewed-cog.tar.gz
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: rc03-reviewed-source
+          path: reviewed-cog.tar.gz
+          retention-days: 1
