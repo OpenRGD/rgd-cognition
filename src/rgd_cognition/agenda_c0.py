@@ -2,6 +2,7 @@
 
 No persistent memory, identity enrollment, clock authority, I/O, plugins or motors.
 Every goal is admitted by local policy and is NOT an ActionIntent.
+Legacy C0 lab only: the separate Core-B path is the intended future Work owner.
 """
 from __future__ import annotations
 
@@ -39,7 +40,10 @@ _CUES = {
     "POSSIBLE_FIRST_STEP": ("imagination", "REAPPRAISE_FIRST_STEP"),
     "EVIDENCE_CONFLICT": ("work", "INVESTIGATE_EVIDENCE_CONFLICT"),
 }
-_TERMINAL = frozenset({"COMPLETED_WITH_UNCERTAINTY", "ABSTAINED", "EXPIRED", "CANCELLED", "FAILED"})
+# REJECTED/DEFERRED describe a final non-admission of this immutable request.
+# Neither TTL nor resource recovery may silently turn it into admitted Work.
+_TERMINAL = frozenset({"COMPLETED_WITH_UNCERTAINTY", "ABSTAINED", "EXPIRED", "CANCELLED", "FAILED",
+                       "REJECTED", "DEFERRED"})
 _POLICY = "cog-c0-session-internal-readonly-v1"
 
 
@@ -87,6 +91,11 @@ class SessionAgenda:
         self._audit: list[dict] = []
         self._running: str | None = None
         self._closed = False
+        self._user_paused = False
+
+    @property
+    def user_paused(self) -> bool:
+        return self._user_paused
 
     def _now(self) -> int:
         value = self._clock()
@@ -198,7 +207,12 @@ class SessionAgenda:
         event_ref = self._event_ref(event)
         key = (event["local_alias"], event["source_id"], event["source_session_id"],
                event["event_id"], cue_kind, parent_goal_id)
-        fingerprint = local_digest(event)
+        # The key identifies an event/cue/parent; the fingerprint commits the
+        # entire requested intent, including the host context at admission.
+        fingerprint = local_digest({"event": event, "cue_kind": cue_kind,
+            "parent_goal_id": parent_goal_id, "effect_scope": effect_scope,
+            "external_network": external_network, "budget_steps": budget_steps,
+            "ttl_ms": ttl_ms, "context_revision": view["context_revision"]})
         previous = self._seen.get(key)
         if previous is not None:
             if previous[0] != fingerprint:
@@ -228,6 +242,8 @@ class SessionAgenda:
             admission, reason = "REJECTED", "CHILD_LIMIT"
         elif len(self._goals) >= self._max_goals or self._steps >= self._max_steps:
             admission, reason = "REJECTED", "AGENDA_QUOTA"
+        elif self._user_paused:
+            admission, reason = "DEFERRED", "USER_ATTENTION_PAUSED"
         elif self._resource != "NORMAL":
             admission, reason = "DEFERRED", "LIFE_RESOURCE_" + self._resource
         decision = _check("GoalAdmission", {
@@ -256,7 +272,7 @@ class SessionAgenda:
             raise AgendaError("AGENDA_CLOSED")
         now = self._now()
         self._refresh(now)
-        if self._running is not None or self._resource != "NORMAL":
+        if self._user_paused or self._running is not None or self._resource != "NORMAL":
             return None
         for goal_id, goal in self._goals.items():
             if goal.state == "QUEUED":
@@ -272,7 +288,7 @@ class SessionAgenda:
         now = self._now()
         self._refresh(now)
         goal = self._goals.get(goal_id)
-        if not goal or goal.state != "RUNNING" or self._resource != "NORMAL":
+        if self._user_paused or not goal or goal.state != "RUNNING" or self._resource != "NORMAL":
             raise AgendaError("GOAL_NOT_RUNNING")
         if result_code not in {"ANALYSIS_COMPLETE", "INSUFFICIENT_EVIDENCE", "ABSTAIN"}:
             raise AgendaError("UNSUPPORTED_RESULT")
@@ -317,12 +333,29 @@ class SessionAgenda:
         if event["kind"] != "USER_TEXT" or event["privacy_scope"] != "EPHEMERAL_LOCAL":
             raise AgendaError("INVALID_USER_INTERRUPTION")
         now = self._now()
-        view = self._refresh(now)
+        view = self._context()
         if event["local_alias"] != view["local_alias"]:
             raise AgendaError("INSTANCE_MISMATCH")
+        # Latch BEFORE any fallible audit/transition. A full audit must not
+        # permit fresh work or acceptance of a late result during interruption.
+        self._user_paused = True
+        self._refresh(now)
         self._audit_event(None, "USER_INTERRUPTION", "EXTERNAL_ATTENTION", now)
         if self._running:
             self._transition(self._running, "PAUSED_USER", "USER_PREEMPTION", now)
+
+    def release_user_attention(self) -> None:
+        """Trusted local host only; release the barrier, never start a goal."""
+        if self._closed:
+            raise AgendaError("AGENDA_CLOSED")
+        now = self._now()
+        self._refresh(now)
+        if not self._user_paused:
+            return
+        if self._running is not None:
+            raise AgendaError("USER_PAUSE_INCOMPLETE")
+        self._audit_event(None, "USER_ATTENTION_RELEASED", "EXPLICIT_RELEASE", now)
+        self._user_paused = False
 
     def resume(self, goal_id: str) -> dict:
         if self._closed:
@@ -332,7 +365,7 @@ class SessionAgenda:
         goal = self._goals.get(goal_id)
         if not goal or goal.state not in {"PAUSED_USER", "PAUSED_LIFE", "WAITING_EVIDENCE"}:
             raise AgendaError("GOAL_NOT_RESUMABLE")
-        if self._resource != "NORMAL" or self._running is not None:
+        if self._user_paused or self._resource != "NORMAL" or self._running is not None:
             raise AgendaError("RESUME_NOT_ADMITTED")
         self._transition(goal_id, "RUNNING", "WORK_RESUME", now)
         self._running = goal_id
@@ -346,7 +379,7 @@ class SessionAgenda:
         now = self._now()
         self._refresh(now)
         goal = self._goals.get(goal_id)
-        if (not goal or goal.state != "RUNNING" or self._resource != "NORMAL"
+        if (self._user_paused or not goal or goal.state != "RUNNING" or self._resource != "NORMAL"
                 or goal.candidate["goal_kind"] != "REAPPRAISE_FIRST_STEP"):
             raise AgendaError("ONEIRIC_GOAL_NOT_ADMITTED")
         return oneiric_review(source_event_ref=goal.candidate["source_event_ref"],
@@ -354,7 +387,7 @@ class SessionAgenda:
 
     def accept_delegated_result(self, goal_id: str, *, generation: int, context_revision: str) -> bool:
         """Validation only; never sends network requests or applies remote effects."""
-        if self._closed:
+        if self._closed or self._user_paused:
             return False
         try:
             now = self._now()

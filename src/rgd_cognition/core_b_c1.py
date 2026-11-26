@@ -59,7 +59,7 @@ class CoreBAttentionHost:
         self.owners = LocalOwners()
         self.attention = ImuAttention(binding, policy=attention_policy, clock=clock)
         self.runtime_id = "cog.core-b.runtime:" + str(uuid4())
-        self._fence, self._paused, self._closed = role_fence, False, False
+        self._fence, self._closed = role_fence, False
         self._resource = "UNKNOWN"
         self.work = KernelSession(self.schema, owners=self.owners, policy=self._policy,
                                   context_supplier=self._context, clock_ms=lambda: self.attention.now() // 1000000,
@@ -90,7 +90,7 @@ class CoreBAttentionHost:
             ctx = self._context()
             result = self.attention.observe(payload, received_ns=received_ns, freshness=freshness,
                 consent=consent, context_revision=ctx["revision"],
-                allow_goal_generation=self._resource == "NORMAL" and not self._paused)
+                allow_goal_generation=self._resource == "NORMAL" and not self.work.user_paused)
             if result["cue"] is None:
                 return {"attention": result, "proposal": None}
             created_ns = self.attention.now()
@@ -119,18 +119,15 @@ class CoreBAttentionHost:
 
     def interrupt_user(self, channel):
         self.owners.owner(channel, "operator")
-        report = self.work.inspect()
-        for gid, item in report["goals"].items():
-            if item["state"] == "RUNNING":
-                self.work.move(self.owners.work, gid, "PAUSED", reason="PAUSED_USER",
-                               key=digest({"user-pause": gid, "generation": item["generation"]}))
-        self._paused = True
-        self.attention.invalidate()
+        try:
+            self.work.set_user_pause(channel, True)
+        finally:
+            self.attention.invalidate()
 
     def release_user_attention(self, channel):
-        self.owners.owner(channel, "operator")
-        self.work.inspect()
-        self._paused = False  # Explicit Work resume remains separately required.
+        self.work.set_user_pause(channel, False)
+        self.attention.invalidate()  # No pre-pause or paused observation window.
+        # Explicit Work resume remains separately required.
 
     def close(self):
         report = self.work.close()

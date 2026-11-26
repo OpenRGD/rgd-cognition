@@ -102,6 +102,109 @@ class ClosureTests(unittest.TestCase):
         with self.assertRaisesRegex(BridgeError,'RESULT_'):
             validate_result_bundle(self.schema,bad)
 
+    def test_rc04_transition_context_must_equal_outcome_and_trace(self):
+        _, result = self.finish()
+        bad = deepcopy(result)
+        bad['transition']['context']['revision'] = 'sha256:' + '9'*64
+        with self.assertRaises(BridgeError):
+            validate_result_bundle(self.schema, bad)
+
+    def test_rc05_transition_reason_must_match_outcome(self):
+        _, result = self.finish()
+        bad = deepcopy(result)
+        bad['detail']['reason_code'] = 'PAUSED_USER'
+        with self.assertRaises(BridgeError):
+            validate_result_bundle(self.schema, bad)
+
+    def test_rc04_fence_runtime_and_session_are_part_of_result_context(self):
+        _, result = self.finish()
+        for field, value in (('role_fencing_generation', 8), ('runtime_instance_id', 'other:runtime'),
+                             ('session_id', 'other:session'), ('policy_revision', 'other:policy')):
+            bad = deepcopy(result)
+            bad['transition']['context'][field] = value
+            with self.subTest(field=field), self.assertRaisesRegex(BridgeError, 'RESULT_TRANSITION_CONTEXT_MISMATCH'):
+                validate_result_bundle(self.schema, bad)
+
+    def test_rc05_recomputed_hashes_do_not_make_wrong_semantics_valid(self):
+        _, result = self.finish()
+        bad = deepcopy(result)
+        o, t = bad['outcome'], bad['cognitive_trace']
+        o['result_semantics'] = 'ABSTAINED_UNVERIFIED'
+        t['result_semantics'] = o['result_semantics']
+        t['outcome_digest'] = digest({k:v for k,v in o.items() if k != 'trace_ref'})
+        t['trace_id'] = digest({k:v for k,v in t.items() if k != 'trace_id'})
+        o['trace_ref'] = t['trace_id']
+        with self.assertRaisesRegex(BridgeError, 'RESULT_SEMANTICS_MISMATCH'):
+            validate_result_bundle(self.schema, bad)
+        bad = deepcopy(result)
+        bad['transition']['from_state'] = 'PAUSED'
+        with self.assertRaisesRegex(BridgeError, 'RESULT_STATE_MISMATCH'):
+            validate_result_bundle(self.schema, bad)
+
+    def test_rc07_pause_blocks_all_work_and_only_operator_can_release(self):
+        g, ticket = self.start()
+        self.assertEqual(self.work.submit(self.owners.model, self.goal('g:queued'), key='queue')['outcome'],'ADMIT')
+        with self.assertRaisesRegex(BridgeError, 'WRONG_OPERATOR_OWNER'):
+            self.work.set_user_pause(self.owners.model, True)
+        self.clock.value = 200
+        self.work.set_user_pause(self.owners.operator, True)
+        usage = self.work.inspect()['usage']
+        self.assertEqual(usage['spent_wall_ms'], 100)
+        self.assertTrue(self.work.user_paused)
+        self.assertEqual(self.work.inspect()['goals'][g['goal_id']]['state'],'PAUSED')
+        self.work.set_user_pause(self.owners.operator, True)
+        self.assertEqual(usage, self.work.inspect()['usage'])
+        self.assertEqual(self.work.submit(self.owners.model, self.goal('g:deferred'), key='defer')['outcome'],'DEFER')
+        self.assertEqual(self.work.inspect()['usage']['reserved_steps'], usage['reserved_steps'])
+        self.work.set_resources(self.owners.operator, 'LOW')
+        self.work.set_resources(self.owners.operator, 'NORMAL')
+        for name, key in ((g['goal_id'], 'g:a:start'), ('g:queued','start-queued')):
+            with self.assertRaisesRegex(BridgeError, 'USER_ATTENTION_PAUSED'):
+                self.work.move(self.owners.work, name, 'RUNNING', key=key)
+        with self.assertRaisesRegex(BridgeError, 'USER_ATTENTION_PAUSED'):
+            self.work.ticket(self.owners.work, g['goal_id'])
+        with self.assertRaisesRegex(BridgeError, 'USER_ATTENTION_PAUSED'):
+            self.work.finish(self.owners.work, ticket, code='ABSTAIN', evidence_refs=[], key='late')
+        with self.assertRaisesRegex(BridgeError, 'WRONG_OPERATOR_OWNER'):
+            self.work.set_user_pause(self.owners.work, False)
+        self.work.set_user_pause(self.owners.operator, False)
+        self.assertEqual(self.work.inspect()['goals'][g['goal_id']]['state'],'PAUSED')
+        self.work.move(self.owners.work, g['goal_id'], 'RUNNING', key='new-start')
+        with self.assertRaisesRegex(BridgeError, 'STALE_TASK_RESULT'):
+            self.work.finish(self.owners.work, ticket, code='ABSTAIN', evidence_refs=[], key='late-after-release')
+        fresh = self.work.ticket(self.owners.work, g['goal_id'])
+        self.assertEqual(self.work.finish(self.owners.work, fresh, code='ABSTAIN', evidence_refs=[], key='finish-new')['outcome']['code'],'ABSTAIN')
+
+    def test_rc07_audit_exhaustion_latches_and_closes_session(self):
+        work = KernelSession(self.schema, owners=self.owners,
+            policy=Limits(enabled=True, records=8, total_steps=16, total_wall_ms=20000, queue_items=8),
+            context_supplier=lambda:deepcopy(self.ctx),clock_ms=self.clock,clock_domain='test:clock')
+        work.set_resources(self.owners.operator,'NORMAL')
+        work.submit(self.owners.model,self.goal('g:running'),key='run')
+        work.move(self.owners.work,'g:running','RUNNING',key='start')
+        ticket=work.ticket(self.owners.work,'g:running')
+        # Six rejected submissions fill idempotency/audit without consuming work budget.
+        from rgd_cognition.core_b_adapter import goal_revision
+        for i in range(6):
+            g=self.goal('g:reject:'+str(i));g['requested_effects']=['PHYSICAL_ACTION_REQUEST'];g['goal_revision']=goal_revision(g)
+            self.assertEqual(work.submit(self.owners.model,g,key='reject:'+str(i))['outcome'],'REJECT')
+        with self.assertRaisesRegex(BridgeError,'USER_PAUSE_FAILED'):
+            work.set_user_pause(self.owners.operator,True)
+        self.assertTrue(work.user_paused)
+        self.assertEqual(work._jobs['g:running'].state,'CANCELLED')
+        self.assertEqual(work._usage()['reserved_steps'],0)
+        with self.assertRaisesRegex(BridgeError,'SESSION_CLOSED'):
+            work.set_user_pause(self.owners.operator,False)
+        with self.assertRaisesRegex(BridgeError,'SESSION_CLOSED'):
+            work.finish(self.owners.work,ticket,code='ABSTAIN',evidence_refs=[],key='late')
+
+    def test_rc07_oneiric_cannot_review_while_session_paused(self):
+        package,ticket = self.oneiric()
+        self.work.set_user_pause(self.owners.operator,True)
+        with self.assertRaisesRegex(BridgeError,'USER_ATTENTION_PAUSED'):
+            self.work.review_oneiric(self.owners.work,ticket,observation_tags=['FOOT_LIFT'],key='late-dream')
+        self.assertEqual(self.work.inspect()['usage']['spent_steps'],0)
+
     def test_full_result_replay_inert_mutation_conflicts(self):
         g,t=self.start()
         r=self.work.finish(self.owners.work,t,code='ABSTAIN',evidence_refs=[],key='finished')
