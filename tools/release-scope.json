@@ -17,6 +17,12 @@
     "src/rgd_cognition/runtime_lab.py",
     "tests_runtime/test_runtime_lab.py",
     "docs/COG-RUNTIME-01A.md",
-    ".github/workflows/runtime-lab.yml"
+    ".github/workflows/runtime-lab.yml",
+    "src/rgd_cognition/worker_lab/__init__.py",
+    "src/rgd_cognition/worker_lab/fixture.py",
+    "src/rgd_cognition/worker_lab/__main__.py",
+    "tests_runtime/test_runtime_worker_lab.py",
+    "docs/COG-RUNTIME-01B.md",
+    ".github/workflows/runtime-worker.yml"
   ]
 }

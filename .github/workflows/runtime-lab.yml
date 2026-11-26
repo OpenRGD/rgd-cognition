@@ -54,16 +54,17 @@ jobs:
       - name: Preserve frozen baseline and exact RC03C review delta
         run: |
           git fetch --no-tags --depth=1 origin a83381b13396baa226e3aaa714225db9b3983051
+          git fetch --no-tags --depth=1 origin 1c01c855ebe1927aedd2e70b99ad49d6a1636cb5
           python tools/check_rc02a_scope.py
           python - <<'PY'
           import subprocess
-          raw = subprocess.check_output(['git','diff','--no-renames','--name-status','-z','a83381b13396baa226e3aaa714225db9b3983051','HEAD'])
+          raw = subprocess.check_output(['git','diff','--no-renames','--name-status','-z','a83381b13396baa226e3aaa714225db9b3983051','1c01c855ebe1927aedd2e70b99ad49d6a1636cb5'])
           fields = raw.decode().split('\0')[:-1]
           actual = set(zip(fields[::2],fields[1::2]))
           expected = {('M','tools/release-scope.json'),('A','src/rgd_cognition/runtime_lab.py'),('A','tests_runtime/test_runtime_lab.py'),('A','docs/COG-RUNTIME-01A.md'),('A','.github/workflows/runtime-lab.yml')}
           if len(fields) != len(expected)*2 or actual != expected:
               raise SystemExit('RUNTIME01A_SCOPE_MISMATCH')
-          print('RUNTIME01A exact four additions + one manifest update; RC03C and historical runtime bytes preserved.')
+          print('RUNTIME01A historical exact four additions + one manifest update preserved; descendant checked by release scope.')
           PY
           git diff --check a83381b13396baa226e3aaa714225db9b3983051 HEAD
       - name: Installed wheel replay outside checkout
