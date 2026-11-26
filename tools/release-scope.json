@@ -13,6 +13,10 @@
     "tools/check_release_scope.py",
     "tools/release-scope.json",
     "tests_release/test_release_scope.py",
-    ".github/workflows/release-readiness.yml"
+    ".github/workflows/release-readiness.yml",
+    "src/rgd_cognition/runtime_lab.py",
+    "tests_runtime/test_runtime_lab.py",
+    "docs/COG-RUNTIME-01A.md",
+    ".github/workflows/runtime-lab.yml"
   ]
 }
