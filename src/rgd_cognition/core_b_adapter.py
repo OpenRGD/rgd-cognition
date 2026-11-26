@@ -1,7 +1,7 @@
 """Opt-in Core-B consumer. Session-only; no effects, devices, or Core runtime.
 
 Trusted in-process host provisions owners/policy/clock. Object-identity channels
-are NOT remote authentication or an OS sandbox. Existing C0/C1 paths are intact.
+are NOT remote authentication or an OS sandbox. C0 remains a separate legacy laboratory; this is the opt-in Work path.
 """
 from __future__ import annotations
 
@@ -27,6 +27,11 @@ TERMINAL = frozenset({"COMPLETED", "CANCELLED", "REJECTED", "FAILED"})
 TASKS = {
     "cog.task.v1:imu-uncertainty": ("INVESTIGATE", "IMU_DISCREPANCY"),
     "cog.task.v1:oneiric-first-step": ("ONEIRIC_REVIEW", "POSSIBLE_FIRST_STEP"),
+}
+_RESULT_SEMANTICS = {
+    "ANALYSIS_COMPLETE": ("COMPLETED", "INQUIRY_FINISHED_UNVERIFIED"),
+    "INSUFFICIENT_EVIDENCE": ("PAUSED", "INQUIRY_PAUSED_EVIDENCE"),
+    "ABSTAIN": ("COMPLETED", "ABSTAINED_UNVERIFIED"),
 }
 
 
@@ -207,6 +212,7 @@ class KernelSession:
         self._last = -1
         self._closed = False
         self._resource = "UNKNOWN"
+        self._user_paused = False
         self._seen = {}
         self._jobs: dict[str, _Job] = {}
         self._audit = []
@@ -330,6 +336,43 @@ class KernelSession:
                 "reserved_slots": sum(j.slots for j in self._jobs.values()),
                 "idempotency_entries": len(self._seen)}
 
+    @property
+    def user_paused(self) -> bool:
+        with self._lock:
+            return self._user_paused
+
+    def set_user_pause(self, channel, paused: bool) -> None:
+        """Operator-owned session barrier, serialized with every Work operation.
+
+        Latch before fallible checks; release never resumes a task or restores
+        a ticket. A single-goal PAUSED_USER transition alone is not this barrier.
+        No claim of asynchronous provider cancellation or hardware preemption.
+        """
+        with self._lock:
+            self._owners.owner(channel, "operator")
+            require(type(paused) is bool, "INVALID_USER_PAUSE")
+            if paused:
+                self._user_paused = True
+                try:
+                    self._current()
+                    for job in self._jobs.values():
+                        if job.state == "RUNNING":
+                            self.move(self._owners.work, job.goal["goal_id"], "PAUSED",
+                                      key=digest({"user-pause": job.goal["goal_id"],
+                                                  "generation": job.generation}), reason="PAUSED_USER")
+                    # A cached transition must never count as a fresh pause.
+                    require(not any(j.state == "RUNNING" for j in self._jobs.values()),
+                            "USER_PAUSE_INCOMPLETE")
+                except Exception:
+                    self._stop_all("USER_PAUSE_FAILED")
+                    self._closed = True
+                    raise BridgeError("USER_PAUSE_FAILED") from None
+            else:
+                self._current()
+                require(not self._user_paused or not any(j.state == "RUNNING" for j in self._jobs.values()),
+                        "USER_PAUSE_INCOMPLETE")
+                self._user_paused = False
+
     def submit(self, channel, goal: dict, *, key: str, task_detail: dict | None = None) -> dict:
         with self._lock:
             producer, origin = self._owners.producer(channel)
@@ -339,6 +382,9 @@ class KernelSession:
             require(goal["provenance"]["producer_ref"] == producer and goal["origin"] == origin,
                     "PRODUCER_ROLE_MISMATCH")
             require(goal_revision(goal) == goal["goal_revision"], "GOAL_REVISION_MISMATCH")
+            if channel is self._owners.attention:
+                require(task_detail is not None and goal["goal_kind"] == "INVESTIGATE" and
+                        goal["task_ref"] == "cog.task.v1:imu-uncertainty", "ATTENTION_TASK_DETAIL_REQUIRED")
             if task_detail is not None:
                 kind = ("OneiricTaskDetail" if goal["goal_kind"] == "ONEIRIC_REVIEW"
                         else "TaskDetail")
@@ -354,13 +400,30 @@ class KernelSession:
                             "ONEIRIC_SOURCE_UNBOUND")
                 else:
                     from .attention_c1 import _validate, _digest
+                    require(channel is self._owners.attention, "ATTENTION_OWNER_REQUIRED")
                     cue = task_detail["source_cue"]
                     _validate("AttentionCue", cue)
                     require(_digest({k: v for k, v in cue.items() if k != "cue_id"}) == cue["cue_id"],
                             "TASK_CUE_DIGEST_MISMATCH")
                     require(cue["context_revision"] == ctx["revision"] and
-                            goal["provenance"]["evidence_refs"] == cue["source_refs"],
+                            goal["provenance"]["evidence_refs"] == cue["source_refs"] and
+                            goal["goal_id"] == cue["cue_id"] and
+                            goal["provenance"]["class"] == ("SYNTHETIC" if cue["origin"] == "SYNTHETIC" else "DERIVED"),
                             "TASK_CUE_EVIDENCE_MISMATCH")
+                    require(cue["attention_session_id"] == ctx["session_id"] and
+                            cue["receipt_clock_domain"] == self.clock_domain,
+                            "TASK_CUE_CLOCK_OR_SESSION_MISMATCH")
+                    # Independently reconstruct the factory's conservative
+                    # projection. A self-consistent goal digest is insufficient.
+                    created = task_detail["created_monotonic_ns"]
+                    deadline = cue["expires_at_monotonic_ns"]
+                    life = goal["lifetime"]
+                    start_ms = (created + 999999) // 1000000
+                    end_ms = deadline // 1000000
+                    require(task_detail["deadline_monotonic_ns"] == deadline and
+                            end_ms > start_ms and life["created_ms"] == start_ms and
+                            life["ttl_ms"] == end_ms - start_ms,
+                            "TASK_CUE_DEADLINE_MISMATCH")
             fingerprint = digest(goal if task_detail is None else {"goal": goal, "task": task_detail})
             scoped, old = self._remembered(producer, key, fingerprint)
             if old is not None:
@@ -388,6 +451,8 @@ class KernelSession:
                     or parent.children >= parent.goal["budget"]["subgoals"]
                     or budget["depth"] > parent.goal["budget"]["depth"]):
                 reason, outcome = "PARENT_NOT_ELIGIBLE", "REJECT"
+            elif self._user_paused:
+                reason, outcome = "USER_ATTENTION_PAUSED", "DEFER"
             elif self._resource != "NORMAL":
                 reason, outcome = "RESOURCE_" + self._resource, "DEFER"
             elif (usage["spent_steps"] + usage["reserved_steps"] + budget["steps"] > self._policy.total_steps
@@ -448,6 +513,8 @@ class KernelSession:
             now, _ = self._current()
             require(reason in {"WORK_REQUEST", "PAUSED_USER", "PAUSED_LIFE", "WAITING_EVIDENCE", "USER_CANCELLED"},
                     "UNKNOWN_TRANSITION_REASON")
+            if to_state == "RUNNING":
+                require(not self._user_paused, "USER_ATTENTION_PAUSED")
             fingerprint = digest({"goal": goal_id, "to": to_state, "reason": reason})
             scoped, old = self._remembered(self._owners.work_ref, key, fingerprint)
             if old is not None:
@@ -471,12 +538,14 @@ class KernelSession:
         with self._lock:
             self._owners.owner(channel, "work")
             self._current()
+            require(not self._user_paused, "USER_ATTENTION_PAUSED")
             job = self._jobs.get(goal_id)
             require(job is not None and job.state == "RUNNING" and self._resource == "NORMAL", "NOT_RUNNING")
             return {"goal_id": goal_id, "goal_revision": job.goal["goal_revision"],
                     "context": deepcopy(job.goal["context"]), "task_generation": job.generation}
 
     def _ticket_job(self, ticket: dict) -> _Job:
+        require(not self._user_paused, "USER_ATTENTION_PAUSED")
         require(type(ticket) is dict and
                 set(ticket) == {"goal_id", "goal_revision", "context", "task_generation"},
                 "INVALID_TICKET")
@@ -526,6 +595,7 @@ class KernelSession:
         with self._lock:
             self._owners.owner(channel, "work")
             now, _ = self._current()
+            require(not self._user_paused, "USER_ATTENTION_PAUSED")
             # Full immutable result intent: a changed interpretation is a conflict.
             fingerprint = digest({"ticket": ticket, "code": code, "evidence_refs": evidence_refs,
                                   "interpretation": interpretation})
@@ -562,7 +632,7 @@ class KernelSession:
                 require(interpretation is None, "INTERPRETATION_NOT_ALLOWED")
             job.remaining_steps -= 1
             self._spent_steps += 1
-            to_state = "PAUSED" if code == "INSUFFICIENT_EVIDENCE" else "COMPLETED"
+            to_state, semantics = _RESULT_SEMANTICS[code]
             result = self._transition(job, job.state, to_state, code, key, now)
             outcome = {
                 "schema_version": "cog_core_b_outcome_v1-candidate",
@@ -571,10 +641,7 @@ class KernelSession:
                 "transition_ref": result["transition"]["transition_id"],
                 "task_ref": job.goal["task_ref"], "context": deepcopy(job.goal["context"]),
                 "code": code,
-                "result_semantics": {
-                    "ANALYSIS_COMPLETE": "INQUIRY_FINISHED_UNVERIFIED",
-                    "INSUFFICIENT_EVIDENCE": "INQUIRY_PAUSED_EVIDENCE",
-                    "ABSTAIN": "ABSTAINED_UNVERIFIED"}[code],
+                "result_semantics": semantics,
                 "verification": "UNVERIFIED", "evidence_refs": deepcopy(evidence_refs),
                 "task_generation": ticket["task_generation"],
                 "interpretation": deepcopy(interpretation),
@@ -668,7 +735,7 @@ class KernelSession:
         with self._lock:
             self._current()
             return {"scope": "SESSION_SCOPED", "life_id": None, "chronon_status": "NOT_CONNECTED",
-                    "resource": self._resource, "usage": self._usage(),
+                    "resource": self._resource, "user_paused": self._user_paused, "usage": self._usage(),
                     "goals": {k: {"state": j.state, "generation": j.generation, "detail": deepcopy(j.detail)}
                               for k, j in self._jobs.items()}}
 
@@ -713,8 +780,14 @@ def validate_result_bundle(schema: CoreBSchema, bundle: dict) -> dict:
     outcome = check_detail("Outcome", bundle["outcome"])
     trace = check_detail("CognitiveTraceCoreB", bundle["cognitive_trace"])
     context = schema.check("Context", outcome["context"])
-    require(transition["to_state"] == ("PAUSED" if outcome["code"] == "INSUFFICIENT_EVIDENCE"
-                                           else "COMPLETED"), "RESULT_STATE_MISMATCH")
+    require(transition["context"] == context, "RESULT_TRANSITION_CONTEXT_MISMATCH")
+    expected_state, expected_semantics = _RESULT_SEMANTICS[outcome["code"]]
+    require(transition["from_state"] == "RUNNING" and transition["to_state"] == expected_state,
+            "RESULT_STATE_MISMATCH")
+    require(detail["reason_code"] == outcome["code"] and
+            outcome["result_semantics"] == expected_semantics, "RESULT_SEMANTICS_MISMATCH")
+    require(outcome["code"] != "ANALYSIS_COMPLETE" or bool(outcome["evidence_refs"]),
+            "RESULT_EVIDENCE_REQUIRED")
     for obj in (outcome, trace):
         require((obj["goal_id"],obj["goal_revision"],obj["admission_ref"],obj["transition_ref"],
                  obj["context"],obj["task_ref"]) ==

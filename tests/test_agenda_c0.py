@@ -90,7 +90,72 @@ class AgendaTests(unittest.TestCase):
         self.agenda.interrupt_user(event)
         self.assertEqual(self.agenda.view(gid)["state"], "PAUSED_USER")
         self.assertNotIn("DO_NOT_PERSIST", json.dumps(self.agenda.audit()))
+        with self.assertRaises(AgendaError): self.agenda.resume(gid)
+        self.agenda.release_user_attention()
         self.assertEqual(self.agenda.resume(gid)["state"], "RUNNING")
+
+    def test_rc01_rejected_and_deferred_dispositions_never_expire(self):
+        rejected = self.goal(101, effect_scope="PHYSICAL_ACTION_REQUEST", ttl_ms=5)
+        self.agenda.set_resources("LOW")
+        deferred = self.goal(102, ttl_ms=5)
+        self.clock.advance(6)
+        self.agenda.set_resources("NORMAL")
+        for record, state in ((rejected, "REJECTED"), (deferred, "DEFERRED")):
+            gid = record["candidate"]["candidate_id"]
+            self.assertEqual(self.agenda.view(gid)["state"], state)
+        self.assertIsNone(self.agenda.start_next())
+
+    def test_rc02_full_immutable_intent_conflicts(self):
+        original = self.goal(103, budget_steps=2, ttl_ms=500)
+        self.assertEqual(original, self.goal(103, budget_steps=2, ttl_ms=500))
+        for change in ({"budget_steps": 3}, {"ttl_ms": 501},
+                       {"effect_scope": "COMMUNICATION_REQUEST"}, {"external_network": True}):
+            kwargs = {"budget_steps": 2, "ttl_ms": 500, **change}
+            with self.subTest(change=change), self.assertRaises(AgendaError):
+                self.goal(103, **kwargs)
+        self.assertEqual(len(self.agenda.checkpoint()["goals"]), 1)
+
+    def test_rc03_session_pause_blocks_other_queued_work(self):
+        self.goal(104)
+        self.goal(105)
+        self.agenda.start_next()
+        self.agenda.interrupt_user(synthetic_event(106))
+        self.assertIsNone(self.agenda.start_next())
+
+    def test_rc03_release_does_not_resume_or_readmit_deferred(self):
+        first = self.goal(107)["candidate"]["candidate_id"]
+        self.agenda.start_next()
+        generation = self.agenda.view(first)["generation"]
+        self.agenda.interrupt_user(synthetic_event(108))
+        deferred = self.goal(109)
+        self.assertEqual(deferred["admission"]["outcome"], "DEFERRED")
+        self.assertIsNone(deferred["admission"]["granted_effect_scope"])
+        self.agenda.set_resources("LOW")
+        self.agenda.set_resources("NORMAL")
+        with self.assertRaises(AgendaError): self.agenda.resume(first)
+        with self.assertRaises(AgendaError): self.agenda.run_step(first, evidence_refs=[], result_code="ABSTAIN")
+        self.assertFalse(self.agenda.accept_delegated_result(first, generation=generation,
+                         context_revision=self.view["context_revision"]))
+        self.agenda.release_user_attention()
+        self.assertIsNone(self.agenda.start_next())
+        self.assertEqual(self.agenda.view(first)["state"], "PAUSED_USER")
+        self.assertEqual(self.agenda.resume(first)["state"], "RUNNING")
+        self.assertFalse(self.agenda.accept_delegated_result(first, generation=generation,
+                         context_revision=self.view["context_revision"]))
+
+    def test_rc03_saturated_audit_cannot_remove_pause_barrier(self):
+        agenda = SessionAgenda(context_supplier=lambda: self.view, clock=self.clock,
+                                resource_state="NORMAL", max_audit=2)
+        gid = agenda.propose(observation(110), cue_kind="IMU_DISCREPANCY")["candidate"]["candidate_id"]
+        running = agenda.start_next()
+        with self.assertRaisesRegex(AgendaError, "AUDIT_CAPACITY"):
+            agenda.interrupt_user(synthetic_event(111))
+        self.assertTrue(agenda.user_paused)
+        self.assertIsNone(agenda.start_next())
+        self.assertFalse(agenda.accept_delegated_result(gid, generation=running["generation"],
+                         context_revision=self.view["context_revision"]))
+        with self.assertRaises(AgendaError): agenda.run_step(gid, evidence_refs=[], result_code="ABSTAIN")
+        with self.assertRaisesRegex(AgendaError, "USER_PAUSE_INCOMPLETE"): agenda.release_user_attention()
 
     def test_one_running_goal_per_session(self):
         self.goal(1); self.goal(2)
@@ -193,6 +258,7 @@ class AgendaTests(unittest.TestCase):
         self.assertTrue(self.agenda.accept_delegated_result(gid, generation=gen, context_revision=self.view["context_revision"]))
         self.agenda.interrupt_user(synthetic_event(99))
         self.assertFalse(self.agenda.accept_delegated_result(gid, generation=gen, context_revision=self.view["context_revision"]))
+        self.agenda.release_user_attention()
         self.agenda.resume(gid)
         self.assertFalse(self.agenda.accept_delegated_result(gid, generation=gen, context_revision=self.view["context_revision"]))
 

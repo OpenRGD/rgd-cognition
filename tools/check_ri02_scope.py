@@ -12,7 +12,9 @@ NEW={
 }
 GUARDS={"tools/check_core_b_scope.py","tools/check_core_d_scope.py","tools/check_ri_scope.py"}
 subprocess.run(["git","fetch","--no-tags","--depth=1","origin",BASE],check=True,stdout=subprocess.DEVNULL)
-rows=[r.split("\t",1) for r in subprocess.check_output(["git","diff","--name-status",BASE,"HEAD"],text=True).splitlines()]
+subprocess.run(["git", "fetch", "--no-tags", "--depth=1", "origin", "9235d3759b263bfde2d8644c46845e9a338e9238"],
+               check=True, stdout=subprocess.DEVNULL)
+rows=[r.split("\t",1) for r in subprocess.check_output(["git","diff","--name-status",BASE,"9235d3759b263bfde2d8644c46845e9a338e9238"],text=True).splitlines()]
 seen,guard=set(),set()
 for status,path in rows:
     if status=="A" and path in NEW:seen.add(path)
@@ -21,3 +23,7 @@ for status,path in rows:
 if seen!=NEW or guard!=GUARDS:
     raise SystemExit("RI02_SCOPE_MISSING:"+str(sorted(NEW-seen))+"; guards="+str(sorted(GUARDS-guard)))
 print("RI02 exact six additions and three CI-only scope guards; all previous runtime/schema code immutable.")
+
+# Validate the reviewed RI02 delta first, then the explicit RC02A patch.
+from check_rc02a_scope import check as check_rc02a
+check_rc02a()

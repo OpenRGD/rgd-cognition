@@ -10,7 +10,7 @@ from rgd_cognition.attention_c1_demo import FixtureClock, fixture_binding, fixtu
 from rgd_cognition.context import context_slice
 from rgd_cognition.contracts import validate, ContractError
 from rgd_cognition.rgd_context import RGDContextResolver, CORE_COMMIT
-from rgd_cognition.core_b_adapter import Limits, BridgeError, check_detail, validate_result_bundle
+from rgd_cognition.core_b_adapter import Limits, BridgeError, check_detail, validate_result_bundle, goal_revision, make_goal
 from rgd_cognition.core_b_c1 import CoreBAttentionHost, cue_goal
 
 CORE = Path(os.environ['RGD_CORE_CHECKOUT'])
@@ -127,6 +127,73 @@ class GenuineIntegration(unittest.TestCase):
         self.host.work.move(o.work,g['goal_id'],'RUNNING',key='resume')
         with self.assertRaisesRegex(BridgeError,'STALE_TASK_RESULT'):
             self.host.work.finish(o.work,old,code='ABSTAIN',evidence_refs=[],key='late')
+
+    def fresh_cue_package(self):
+        # Exercise the real producer without first admitting its goal.
+        for i in range(3):
+            self.clock.advance(100)
+            observed = self.host.attention.observe(fixture_sample(i), received_ns=self.clock(),
+                freshness='FRESH', consent=True, context_revision=self.host._context()['revision'],
+                allow_goal_generation=True)
+        self.assertIsNotNone(observed['cue'])
+        return cue_goal(self.host.schema, observed['cue'], context=self.host._context(),
+            created_ns=self.clock(), clock_domain=self.host.attention.session_id,
+            producer_ref=self.host.owners.producer(self.host.owners.attention)[0],
+            budget=dict(wall_time_ms=1000, steps=2, subgoals=0, depth=0, queue_items=1))
+
+    def test_rc06_receiver_refuses_renewed_evidence_deadline(self):
+        package = self.fresh_cue_package()
+        goal, detail = package['goal'], package['detail']
+        goal['lifetime']['ttl_ms'] += 1000
+        goal['goal_revision'] = goal_revision(goal)
+        detail['goal_revision'] = goal['goal_revision']
+        with self.assertRaises(BridgeError):
+            self.host.work.submit(self.host.owners.attention, goal, key='extended', task_detail=detail)
+        self.assertEqual(self.host.work.inspect()['usage']['reserved_steps'], 0)
+
+    def test_rc07_work_start_blocked_during_operator_pause(self):
+        o = self.host.owners
+        ctx = self.host._context()
+        goal = make_goal(self.host.schema, goal_id='queued:model', task_ref='cog.task.v1:imu-uncertainty',
+            context=ctx, clock_domain=self.host.attention.session_id, created_ms=self.clock()//1000000,
+            ttl_ms=2000, producer_ref=o.producer(o.model)[0], origin='MODEL',
+            budget=dict(wall_time_ms=1000, steps=2, subgoals=0, depth=0, queue_items=1),
+            evidence_refs=['fixture:input'])
+        self.assertEqual(self.host.work.submit(o.model, goal, key='queued')['outcome'], 'ADMIT')
+        self.host.interrupt_user(o.operator)
+        with self.assertRaises(BridgeError):
+            self.host.work.move(o.work, goal['goal_id'], 'RUNNING', key='start-paused')
+        self.assertEqual(self.host.work.inspect()['goals'][goal['goal_id']]['state'], 'ADMITTED')
+
+    def test_rc06_attention_companion_required_and_valid_package_still_admitted(self):
+        p = self.fresh_cue_package()
+        o = self.host.owners
+        with self.assertRaisesRegex(BridgeError,'ATTENTION_TASK_DETAIL_REQUIRED'):
+            self.host.work.submit(o.attention,p['goal'],key='no-detail')
+        self.assertEqual(self.host.work.inspect()['usage']['reserved_steps'],0)
+        result=self.host.work.submit(o.attention,p['goal'],key='with-detail',task_detail=p['detail'])
+        self.assertEqual(result['outcome'],'ADMIT')
+        self.assertEqual(self.host.work.inspect()['usage']['reserved_steps'],2)
+
+    def test_rc06_deadline_projection_and_cue_identity_are_checked_at_receiver(self):
+        p=self.fresh_cue_package()
+        def change(which, goal, detail):
+            if which=='detail-deadline': detail['deadline_monotonic_ns'] += 1000000
+            elif which=='detail-created': detail['created_monotonic_ns'] -= 1000000
+            elif which=='provenance': goal['provenance']['class']='DERIVED'
+            else:
+                cue=detail['source_cue']
+                if which=='foreign-clock':cue['receipt_clock_domain']='other:clock'
+                elif which=='foreign-session':cue['attention_session_id']='other:session'
+                cue['cue_id']=_digest({k:v for k,v in cue.items() if k!='cue_id'})
+                goal['goal_id']=cue['cue_id'];detail['goal_id']=goal['goal_id']
+            goal['goal_revision']=goal_revision(goal);detail['goal_revision']=goal['goal_revision']
+        for kind in ('detail-deadline','detail-created','provenance','foreign-clock','foreign-session'):
+            q=deepcopy(p);change(kind,q['goal'],q['detail'])
+            with self.subTest(kind=kind),self.assertRaises(BridgeError):
+                self.host.work.submit(self.host.owners.attention,q['goal'],key='bad:'+kind,task_detail=q['detail'])
+        self.assertEqual(self.host.work.inspect()['usage']['reserved_steps'],0)
+        self.assertEqual(self.host.work.submit(self.host.owners.attention,p['goal'],key='valid',task_detail=p['detail'])['outcome'],'ADMIT')
 
     def test_real_feed_needs_actual_rgd_not_unverified_json(self):
         with self.assertRaises(BridgeError):

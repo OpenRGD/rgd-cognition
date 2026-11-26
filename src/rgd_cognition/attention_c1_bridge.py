@@ -24,7 +24,7 @@ class AttentionAgenda:
         self.attention = ImuAttention(binding, policy=policy, clock=clock)
         self.work = SessionAgenda(context_supplier=context_supplier, clock=clock,
                                   resource_state=resource_state)
-        self._resource, self._user_paused, self._closed = resource_state, False, False
+        self._resource, self._closed = resource_state, False
 
     def _view(self) -> dict:
         try:
@@ -66,7 +66,7 @@ class AttentionAgenda:
         assessment = self.attention.observe(
             payload, received_ns=received_ns, freshness=freshness, consent=consent,
             context_revision=view["context_revision"],
-            allow_goal_generation=self._resource == "NORMAL" and not self._user_paused)
+            allow_goal_generation=self._resource == "NORMAL" and not self.work.user_paused)
         cue = assessment["cue"]
         if cue is None:
             return {"attention": assessment, "proposal": None}
@@ -104,13 +104,18 @@ class AttentionAgenda:
         self._resource = state
 
     def interrupt_user(self, event: dict):
-        self.work.interrupt_user(event)
-        self._user_paused = True
+        try:
+            self.work.interrupt_user(event)
+        finally:
+            if self.work.user_paused:
+                self.attention.invalidate()
 
     def release_user_attention(self):
         if self._closed:
             raise AttentionError("ATTENTION_CLOSED")
-        self._user_paused = False  # Work.resume remains explicit and rechecked.
+        self.work.release_user_attention()
+        self.attention.invalidate()  # No evidence window gathered during pause.
+        # Work.resume remains explicit and rechecked.
 
     def close(self):
         self.attention.close()

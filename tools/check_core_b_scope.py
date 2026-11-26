@@ -76,8 +76,10 @@ RI02_CI_GUARDS = {
 }
 subprocess.run(["git", "fetch", "--no-tags", "--depth=1", "origin", RI01_BASE],
                check=True, stdout=subprocess.DEVNULL)
+subprocess.run(["git", "fetch", "--no-tags", "--depth=1", "origin", "9235d3759b263bfde2d8644c46845e9a338e9238"],
+               check=True, stdout=subprocess.DEVNULL)
 ri02_rows = [r.split("\t", 1) for r in subprocess.check_output(
-    ["git", "diff", "--name-status", RI01_BASE, "HEAD"],
+    ["git", "diff", "--name-status", RI01_BASE, "9235d3759b263bfde2d8644c46845e9a338e9238"],
     text=True).splitlines()]
 new_seen, guard_seen = set(), set()
 for status, path in ri02_rows:
@@ -90,3 +92,7 @@ for status, path in ri02_rows:
 if new_seen != RI02_ADDITIONS or guard_seen != RI02_CI_GUARDS:
     raise SystemExit("RI02_STACK_SCOPE_MISSING")
 print("RI02 opt-in evidence binding: exactly six new files and three CI-only scope guards.")
+
+# Validate the reviewed RI02 delta first, then the explicit RC02A patch.
+from check_rc02a_scope import check as check_rc02a
+check_rc02a()
