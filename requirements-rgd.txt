@@ -1,0 +1,2 @@
+# Optional canonical toolchain; installed explicitly, never downloaded at runtime.
+rgd @ git+https://github.com/OpenRGD/openrgd.git@afe1a831b950a4e6560f0285a0103fc4eaa343b7

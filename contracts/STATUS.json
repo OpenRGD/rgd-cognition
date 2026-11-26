@@ -1,0 +1,15 @@
+{
+  "package": "openrgd-cognition-local-contracts",
+  "version": "0.1.0-candidate",
+  "maturity": "candidate",
+  "normative": false,
+  "accepted": false,
+  "deployed": false,
+  "scope": "offline foundation subset; not Core agent/v0.1.0 replacement",
+  "schema_source": "src/rgd_cognition/schemas/cog-v0.1.schema.json",
+  "core_reference_commit": "afe1a831b950a4e6560f0285a0103fc4eaa343b7",
+  "identity_verifier": "NOT_CONNECTED",
+  "chronon_writer": "NOT_CONNECTED",
+  "physical_actuation_available": false,
+  "model_provider": "deterministic-baseline-v1"
+}
