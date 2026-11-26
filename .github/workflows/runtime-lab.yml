@@ -1,0 +1,76 @@
+name: COG RUNTIME-01A supervised synthetic lifecycle
+on:
+  push:
+    branches: [main, 'feat/**']
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: cog-runtime-lab-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  lab:
+    name: runtime-lab-py${{ matrix.python }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ['3.10', '3.12']
+    env:
+      RGD_CORE_CHECKOUT: ${{ github.workspace }}/.upstream/core
+      CORE_B_CHECKOUT: ${{ github.workspace }}/.upstream/core-b
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          repository: OpenRGD/openrgd
+          ref: afe1a831b950a4e6560f0285a0103fc4eaa343b7
+          path: .upstream/core
+          persist-credentials: false
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          repository: OpenRGD/openrgd
+          ref: 55a034ceb1cdaab8bed6848fcdde85c9436bc9e0
+          path: .upstream/core-b
+          persist-credentials: false
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
+        with:
+          python-version: ${{ matrix.python }}
+      - name: Verify pins and install reviewed dependencies
+        run: |
+          test "$(git -C .upstream/core rev-parse HEAD)" = afe1a831b950a4e6560f0285a0103fc4eaa343b7
+          test "$(git -C .upstream/core-b rev-parse HEAD)" = 55a034ceb1cdaab8bed6848fcdde85c9436bc9e0
+          python -m pip install -r requirements-ci.txt -r requirements-rgd-ci.txt
+          python -m pip install --no-build-isolation --no-deps -e .upstream/core -e .
+          python -m pip check
+      - name: Genuine C1 Core-B and actual pinned RGD context runtime tests
+        run: |
+          python -m unittest discover -s tests_runtime -v
+          python -O -m unittest discover -s tests_runtime -v
+      - name: Preserve frozen baseline and exact RC03C review delta
+        run: |
+          git fetch --no-tags --depth=1 origin a83381b13396baa226e3aaa714225db9b3983051
+          python tools/check_rc02a_scope.py
+          python - <<'PY'
+          import subprocess
+          raw = subprocess.check_output(['git','diff','--no-renames','--name-status','-z','a83381b13396baa226e3aaa714225db9b3983051','HEAD'])
+          fields = raw.decode().split('\0')[:-1]
+          actual = set(zip(fields[::2],fields[1::2]))
+          expected = {('M','tools/release-scope.json'),('A','src/rgd_cognition/runtime_lab.py'),('A','tests_runtime/test_runtime_lab.py'),('A','docs/COG-RUNTIME-01A.md'),('A','.github/workflows/runtime-lab.yml')}
+          if len(fields) != len(expected)*2 or actual != expected:
+              raise SystemExit('RUNTIME01A_SCOPE_MISMATCH')
+          print('RUNTIME01A exact four additions + one manifest update; RC03C and historical runtime bytes preserved.')
+          PY
+          git diff --check a83381b13396baa226e3aaa714225db9b3983051 HEAD
+      - name: Installed wheel replay outside checkout
+        run: |
+          python -m pip wheel --no-build-isolation --no-deps . -w dist
+          python -m venv /tmp/cog-runtime-wheel
+          /tmp/cog-runtime-wheel/bin/python -m pip install -r requirements-ci.txt
+          /tmp/cog-runtime-wheel/bin/python -m pip install --no-deps dist/*.whl
+          cd /tmp
+          /tmp/cog-runtime-wheel/bin/python -m rgd_cognition.runtime_lab --core-b-checkout "$CORE_B_CHECKOUT" --events 1000
