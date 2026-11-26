@@ -1,0 +1,77 @@
+name: COG RUNTIME-01B bounded fixture worker and cancellation
+on:
+  push:
+    branches: [main, 'feat/**']
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: cog-runtime-worker-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  lab:
+    name: runtime-worker-py${{ matrix.python }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ['3.10', '3.12']
+    env:
+      RGD_CORE_CHECKOUT: ${{ github.workspace }}/.upstream/core
+      CORE_B_CHECKOUT: ${{ github.workspace }}/.upstream/core-b
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          repository: OpenRGD/openrgd
+          ref: afe1a831b950a4e6560f0285a0103fc4eaa343b7
+          path: .upstream/core
+          persist-credentials: false
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          repository: OpenRGD/openrgd
+          ref: 55a034ceb1cdaab8bed6848fcdde85c9436bc9e0
+          path: .upstream/core-b
+          persist-credentials: false
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
+        with:
+          python-version: ${{ matrix.python }}
+      - name: Verify pins and install reviewed dependencies
+        run: |
+          test "$(git -C .upstream/core rev-parse HEAD)" = afe1a831b950a4e6560f0285a0103fc4eaa343b7
+          test "$(git -C .upstream/core-b rev-parse HEAD)" = 55a034ceb1cdaab8bed6848fcdde85c9436bc9e0
+          python -m pip install -r requirements-ci.txt -r requirements-rgd-ci.txt
+          python -m pip install --no-build-isolation --no-deps -e .upstream/core -e .
+          python -m pip check
+      - name: Actual subprocess and genuine C1 Core-B worker tests
+        run: |
+          python -m unittest discover -s tests_runtime -p test_runtime_worker_lab.py -v
+          python -O -m unittest discover -s tests_runtime -p test_runtime_worker_lab.py -v
+      - name: Preserve exact 01A and reviewed worker delta
+        run: |
+          git fetch --no-tags --depth=1 origin 1c01c855ebe1927aedd2e70b99ad49d6a1636cb5
+          python tools/check_rc02a_scope.py
+          python - <<'PY'
+          import subprocess
+          base = '1c01c855ebe1927aedd2e70b99ad49d6a1636cb5'
+          raw = subprocess.check_output(['git','diff','--no-renames','--name-status','-z',base,'HEAD'])
+          fields = raw.decode().split('\0')[:-1]
+          actual = set(zip(fields[::2],fields[1::2]))
+          expected = {('M','tools/release-scope.json'),('M','.github/workflows/runtime-lab.yml'),('A','src/rgd_cognition/worker_lab/__init__.py'),('A','src/rgd_cognition/worker_lab/fixture.py'),('A','src/rgd_cognition/worker_lab/__main__.py'),('A','tests_runtime/test_runtime_worker_lab.py'),('A','docs/COG-RUNTIME-01B.md'),('A','.github/workflows/runtime-worker.yml')}
+          if len(fields) != len(expected)*2 or actual != expected:
+              raise SystemExit('RUNTIME01B_SCOPE_MISMATCH')
+          print('RUNTIME01B exact six additions and two CI-only modifications; old runtime/schema bytes unchanged.')
+          PY
+          git diff --check 1c01c855ebe1927aedd2e70b99ad49d6a1636cb5 HEAD
+      - name: Installed wheel actual worker smoke outside checkout
+        run: |
+          python -m pip wheel --no-build-isolation --no-deps . -w dist
+          python -m venv /tmp/cog-worker-wheel
+          /tmp/cog-worker-wheel/bin/python -m pip install -r requirements-ci.txt
+          /tmp/cog-worker-wheel/bin/python -m pip install --no-deps dist/*.whl
+          cd /tmp
+          /tmp/cog-worker-wheel/bin/python -m rgd_cognition.worker_lab --core-b-checkout "$CORE_B_CHECKOUT"
