@@ -1,0 +1,85 @@
+name: COG RI-03 source-owned IMU evidence conformance
+on:
+  push:
+    branches: [main, 'feat/**']
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: cog-ri03-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  conformance:
+    name: ri-source-binding-py${{ matrix.python }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ['3.10', '3.12']
+    env:
+      RI_CHECKOUT: ${{ github.workspace }}/.upstream/ri
+      CONSOLE_CHECKOUT: ${{ github.workspace }}/.upstream/console
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          repository: OpenRGD/rgd-reality-ingress
+          ref: 3b9a9c2e6d7f69aae3dde1e690fc3c90562a1f43
+          path: .upstream/ri
+          persist-credentials: false
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          repository: OpenRGD/rgd-console
+          ref: b331dd32415eeda0d107676920a6dea91170cc4f
+          path: .upstream/console
+          persist-credentials: false
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
+        with:
+          python-version: ${{ matrix.python }}
+      - name: Verify independent owner pins and install reviewed dependencies
+        run: |
+          test "$(git -C .upstream/ri rev-parse HEAD)" = 3b9a9c2e6d7f69aae3dde1e690fc3c90562a1f43
+          test "$(git -C .upstream/console rev-parse HEAD)" = b331dd32415eeda0d107676920a6dea91170cc4f
+          python -m pip install -r requirements-ci.txt
+          python -m pip install --no-build-isolation --no-deps -e . -e .upstream/ri
+          python -m pip check
+      - name: Actual RI A03 and A04 to accepted Console helper and C1 association
+        run: |
+          python -m unittest discover -s tests_ri03 -v
+          python -O -m unittest discover -s tests_ri03 -v
+      - name: Preserve existing RI01 and RI02 consumer behavior
+        run: |
+          python -m unittest discover -s tests_ri -v
+          python -m unittest discover -s tests_ri02 -v
+      - name: Preserve historical source and exact reviewed candidate scope
+        run: |
+          python tools/check_rc02a_scope.py
+          python tools/check_ri03_scope.py
+      - name: Build and install COG and RI wheels into a clean environment
+        run: |
+          mkdir -p /tmp/cog-ri03-wheels
+          python -m pip wheel --no-build-isolation --no-deps . .upstream/ri -w /tmp/cog-ri03-wheels
+          python -m venv /tmp/cog-ri03-wheel
+          /tmp/cog-ri03-wheel/bin/python -m pip install -r requirements-ci.txt
+          /tmp/cog-ri03-wheel/bin/python -m pip install --no-index --no-deps /tmp/cog-ri03-wheels/*.whl
+          /tmp/cog-ri03-wheel/bin/python -m pip check
+      - name: Run genuine source-association tests from installed wheels outside checkout
+        run: |
+          cd /tmp
+          env -u PYTHONPATH /tmp/cog-ri03-wheel/bin/python - <<'PY'
+          import os
+          from pathlib import Path
+          import rgd_cognition
+          import reality_ingress
+          checkout = Path(os.environ["GITHUB_WORKSPACE"]).resolve()
+          for package in (rgd_cognition, reality_ingress):
+              location = Path(package.__file__).resolve()
+              if checkout in location.parents:
+                  raise SystemExit("RI03_PACKAGE_RESOLVED_TO_SOURCE_CHECKOUT")
+          print("RI03_CLEAN_INSTALLED_WHEELS_VERIFIED")
+          PY
+          env -u PYTHONPATH /tmp/cog-ri03-wheel/bin/python -m unittest discover -s "$GITHUB_WORKSPACE/tests_ri03" -v
