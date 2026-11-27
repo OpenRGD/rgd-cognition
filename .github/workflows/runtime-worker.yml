@@ -54,17 +54,18 @@ jobs:
       - name: Preserve exact 01A and reviewed worker delta
         run: |
           git fetch --no-tags --depth=1 origin 1c01c855ebe1927aedd2e70b99ad49d6a1636cb5
+          git fetch --no-tags --depth=1 origin a2e8690781d9acfa2c134a0ce9722285d0723d57
           python tools/check_rc02a_scope.py
           python - <<'PY'
           import subprocess
           base = '1c01c855ebe1927aedd2e70b99ad49d6a1636cb5'
-          raw = subprocess.check_output(['git','diff','--no-renames','--name-status','-z',base,'HEAD'])
+          raw = subprocess.check_output(['git','diff','--no-renames','--name-status','-z',base,'a2e8690781d9acfa2c134a0ce9722285d0723d57'])
           fields = raw.decode().split('\0')[:-1]
           actual = set(zip(fields[::2],fields[1::2]))
           expected = {('M','tools/release-scope.json'),('M','.github/workflows/runtime-lab.yml'),('A','src/rgd_cognition/worker_lab/__init__.py'),('A','src/rgd_cognition/worker_lab/fixture.py'),('A','src/rgd_cognition/worker_lab/__main__.py'),('A','tests_runtime/test_runtime_worker_lab.py'),('A','docs/COG-RUNTIME-01B.md'),('A','.github/workflows/runtime-worker.yml')}
           if len(fields) != len(expected)*2 or actual != expected:
               raise SystemExit('RUNTIME01B_SCOPE_MISMATCH')
-          print('RUNTIME01B exact six additions and two CI-only modifications; old runtime/schema bytes unchanged.')
+          print('RUNTIME01B historical exact delta preserved; descendants checked by reviewed release scope.')
           PY
           git diff --check 1c01c855ebe1927aedd2e70b99ad49d6a1636cb5 HEAD
       - name: Installed wheel actual worker smoke outside checkout
