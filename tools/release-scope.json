@@ -23,6 +23,18 @@
     "src/rgd_cognition/worker_lab/__main__.py",
     "tests_runtime/test_runtime_worker_lab.py",
     "docs/COG-RUNTIME-01B.md",
-    ".github/workflows/runtime-worker.yml"
+    ".github/workflows/runtime-worker.yml",
+    ".github/workflows/runtime-isolation.yml",
+    "docs/COG-RUNTIME-01C.md",
+    "docs/COG-RC-03B-INTEGRATION.md",
+    "src/rgd_cognition/service_lab/__init__.py",
+    "src/rgd_cognition/service_lab/__main__.py",
+    "tests_service/test_service_lab.py",
+    "tests_service/test_runtime01c_artifact.py",
+    "tools/runtime01c/artifact.py",
+    "tools/runtime01c/probe.py",
+    "tools/runtime01c/rehearse.py",
+    "tools/runtime01c/rgd-cog-lab.service",
+    "tools/runtime01c/check_scope.py"
   ]
 }

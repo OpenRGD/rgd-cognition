@@ -1,0 +1,92 @@
+name: COG RUNTIME-01C Ubuntu 22.04 service isolation rehearsal
+on:
+  push:
+    branches: ['feat/**']
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: cog-runtime-isolation-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  service:
+    name: runtime-isolation-ubuntu22-py3.10
+    runs-on: ubuntu-22.04
+    timeout-minutes: 20
+    env:
+      CORE_B_CHECKOUT: ${{ github.workspace }}/.upstream/core-b
+      SOURCE_DATE_EPOCH: '946684800'
+      PYTHONHASHSEED: '0'
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          repository: OpenRGD/openrgd
+          ref: 55a034ceb1cdaab8bed6848fcdde85c9436bc9e0
+          path: .upstream/core-b
+          persist-credentials: false
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
+        with:
+          python-version: '3.10'
+      - name: Install pinned authoring dependencies and run service regressions
+        run: |
+          test "$(git -C .upstream/core-b rev-parse HEAD)" = 55a034ceb1cdaab8bed6848fcdde85c9436bc9e0
+          python -m pip install -r requirements-ci.txt
+          python -m pip install --no-build-isolation --no-deps -e .
+          python -m pip check
+          python -m unittest discover -s tests_service -v
+          python -O -m unittest discover -s tests_service -v
+          python tools/check_rc02a_scope.py
+          python tools/runtime01c/check_scope.py
+      - name: Build two clean identical wheels and stage offline bundle
+        run: |
+          mkdir -p /tmp/cog-01c-a /tmp/cog-01c-b /tmp/cog-01c-wa /tmp/cog-01c-wb /tmp/cog-01c-wheels
+          git archive HEAD | tar -x -C /tmp/cog-01c-a
+          git archive HEAD | tar -x -C /tmp/cog-01c-b
+          python -m pip wheel --no-build-isolation --no-deps /tmp/cog-01c-a -w /tmp/cog-01c-wa
+          python -m pip wheel --no-build-isolation --no-deps /tmp/cog-01c-b -w /tmp/cog-01c-wb
+          cmp /tmp/cog-01c-wa/*.whl /tmp/cog-01c-wb/*.whl
+          python -m pip download --only-binary=:all: -r requirements-ci.txt -d /tmp/cog-01c-wheels
+          cp /tmp/cog-01c-wa/*.whl /tmp/cog-01c-wheels/
+          python tools/runtime01c/artifact.py assemble --source . --wheels /tmp/cog-01c-wheels --core-b "$CORE_B_CHECKOUT" --output /tmp/cog-01c-bundle --source-commit "$(git rev-parse HEAD)" --source-tree "$(git rev-parse 'HEAD^{tree}')"
+      - name: Actual systemd device network IPC cgroup shutdown and rollback rehearsal
+        run: |
+          sudo env GITHUB_ACTIONS=true RUNNER_OS=Linux "$(command -v python)" tools/runtime01c/rehearse.py --disposable-ci --bundle /tmp/cog-01c-bundle --report /tmp/cog-01c-systemd-report.json
+      - name: Collect exact candidate and rehearsal evidence
+        if: always()
+        run: |
+          mkdir -p candidate-01c
+          test ! -f /tmp/cog-01c-systemd-report.json || cp /tmp/cog-01c-systemd-report.json candidate-01c/
+          test ! -d /tmp/cog-01c-bundle || cp -r /tmp/cog-01c-bundle candidate-01c/offline-bundle
+          git rev-parse HEAD > candidate-01c/test-checkout-commit.txt
+          git rev-parse 'HEAD^{tree}' > candidate-01c/test-checkout-tree.txt
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          path = Path('/tmp/cog-01c-systemd-report.json')
+          if path.is_file():
+              report = json.loads(path.read_text())
+              keys = ('profile', 'source_commit', 'source_tree', 'systemd', 'kernel',
+                      'passed', 'fixture_cleanup', 'unit_unloaded', 'cleanup_errors',
+                      'failure', 'outside_controls', 'negative_probes',
+                      'process_tree_cleanup', 'external_runtime_limit', 'rollback_scope')
+              summary = {key: report[key] for key in keys if key in report}
+              for phase in ('initial_service', 'second_install', 'rollback_service'):
+                  if phase in report:
+                      item = report[phase]
+                      summary[phase] = {'cgroup': item.get('cgroup'),
+                                        'final_status': item.get('final_status')}
+              print(json.dumps(summary, sort_keys=True, indent=2))
+              if report.get('passed') is not True:
+                  print(report.get('journal', 'NO_JOURNAL'))
+          PY
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: runtime01c-ubuntu22-candidate
+          path: candidate-01c/
+          retention-days: 7
