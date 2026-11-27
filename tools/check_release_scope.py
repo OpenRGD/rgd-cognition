@@ -16,7 +16,7 @@ MODIFIED = frozenset({"README.md", "SECURITY.md", "docs/ROADMAP.md",
 REQUIRED_ADDITIONS = frozenset({"docs/COG-RC-03C.md", "tools/check_release_scope.py",
     "tools/release-scope.json", "tests_release/test_release_scope.py",
     ".github/workflows/release-readiness.yml"})
-PREFIXES = ("docs/", "tools/", "tests_release/", "tests_runtime/", "tests_service/",
+PREFIXES = ("docs/", "tools/", "tests_release/", "tests_runtime/", "tests_service/", "tests_ri03/",
             "src/rgd_cognition/", ".github/workflows/")
 
 

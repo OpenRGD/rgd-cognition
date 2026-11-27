@@ -41,7 +41,7 @@ jobs:
           python -m unittest discover -s tests_service -v
           python -O -m unittest discover -s tests_service -v
           python tools/check_rc02a_scope.py
-          python tools/runtime01c/check_scope.py
+          python tools/runtime01c/check_scope.py --end 2612703c7a13efc474dab376c9fa689662183c25
       - name: Build two clean identical wheels and stage offline bundle
         run: |
           mkdir -p /tmp/cog-01c-a /tmp/cog-01c-b /tmp/cog-01c-wa /tmp/cog-01c-wb /tmp/cog-01c-wheels

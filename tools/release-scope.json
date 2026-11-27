@@ -35,6 +35,12 @@
     "tools/runtime01c/probe.py",
     "tools/runtime01c/rehearse.py",
     "tools/runtime01c/rgd-cog-lab.service",
-    "tools/runtime01c/check_scope.py"
+    "tools/runtime01c/check_scope.py",
+    "src/rgd_cognition/ri_source_binding.py",
+    "tests_ri03/test_source_binding.py",
+    "docs/COG-RI-03.md",
+    "docs/handoffs/COG-RI-03-SOURCE-RECONCILIATION.md",
+    ".github/workflows/ri-source-binding.yml",
+    "tools/check_ri03_scope.py"
   ]
 }
